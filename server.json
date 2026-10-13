@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mshark1/audio-mcp",
+  "title": "Audio MCP",
+  "description": "Audio perception for AI agents: measure, see, compare, edit and synthesize sound locally.",
+  "repository": {
+    "url": "https://github.com/mshark1/audio-mcp",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "audio-mcp",
+      "version": "0.1.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AUDIO_MCP_ALLOWED_DIRS",
+          "description": "Optional sandbox: directories the server may read and write (separated by ';' on Windows, ':' elsewhere). Unset means unrestricted.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "AUDIO_MCP_MAX_SECONDS",
+          "description": "Optional: longest section (seconds) loaded into memory per call. Default 1800.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

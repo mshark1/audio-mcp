@@ -8,6 +8,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.1.1] - unreleased
+
+Packaging and discoverability only; no changes to tools or their output.
+
+### Added
+- Listed in the official MCP Registry as `io.github.mshark1/audio-mcp` (`server.json`); releases now publish there
+  automatically.
+- `Dockerfile` for running the server in a container (used by directories that inspect MCP servers), built and
+  smoke-tested in CI.
+
+### Changed
+- `scripts/smoke_stdio.py` now fails when a call that should succeed errors, and can test any server command
+  (e.g. the Docker image).
+
 ## [0.1.0] - 2026-10-12
 
 First public release.

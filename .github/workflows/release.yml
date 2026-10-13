@@ -43,3 +43,33 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  mcp-registry:
+    # Lists (or updates) the server in the official MCP Registry as io.github.mshark1/audio-mcp. Authenticates with
+    # GitHub OIDC, so no secret is stored. The registry verifies the PyPI package's README contains
+    # "mcp-name: <server name>", so this must run after the PyPI upload is visible.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check server.json matches the release tag
+        run: |
+          version=$(jq -r .version server.json)
+          test "v$version" = "${{ github.event.release.tag_name }}" || { echo "server.json $version != tag"; exit 1; }
+      - name: Wait for the new version to appear on PyPI
+        run: |
+          version=$(jq -r .version server.json)
+          for i in $(seq 1 30); do
+            curl -sf "https://pypi.org/pypi/audio-mcp/$version/json" > /dev/null && exit 0
+            sleep 10
+          done
+          echo "audio-mcp $version not visible on PyPI after 5 minutes"; exit 1
+      - name: Install mcp-publisher
+        run: |
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --help > /dev/null
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish

@@ -1,5 +1,7 @@
 # audio-mcp
 
+<!-- mcp-name: io.github.mshark1/audio-mcp -->
+
 **Audio perception for AI agents.** Language models can't hear. This [MCP](https://modelcontextprotocol.io) server
 turns sound into things they *can* reason about: measurements, plain-language problem reports, spectrogram images,
 note lists, event timelines, transcripts and before/after diffs. It can also edit and synthesize audio, so an agent
