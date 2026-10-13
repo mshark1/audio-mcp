@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audio-mcp"
+version = "0.1.0"
+description = "Audio perception for AI agents: measure, see, compare, edit and synthesize sound over MCP."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Mike Sharkey" }]
+requires-python = ">=3.10"
+keywords = ["mcp", "model-context-protocol", "audio", "ai-agents", "llm", "loudness", "spectrogram", "dsp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Multimedia :: Sound/Audio :: Editors",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "soundfile>=0.12.1",
+    "matplotlib>=3.7",
+    "mcp>=2.3,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/mshark1/audio-mcp"
+Issues = "https://github.com/mshark1/audio-mcp/issues"
+Changelog = "https://github.com/mshark1/audio-mcp/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pyloudnorm>=0.1.1", "ruff>=0.6", "build>=1.2", "twine>=5"]
+speech = ["faster-whisper>=1.1"]
+
+[project.scripts]
+audio-mcp = "audio_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "I", "SIM", "PIE"]
+ignore = [
+    "E501",    # the formatter handles line length; long strings in tool descriptions are fine
+    "B905",    # zip() without strict= : lengths are equal by construction here
+    "SIM108",  # ternaries aren't always clearer
+]

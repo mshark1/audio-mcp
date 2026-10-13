@@ -1,0 +1,23 @@
+name: Feature or improvement
+description: Propose a new capability, operation, issue detection, or an improvement to an existing one.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What should an agent be able to do?
+      description: The task, and what goes wrong or is impossible today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Tool or op name, parameters, and an example of the output an agent would see.
+  - type: textarea
+    id: verification
+    attributes:
+      label: How would we know it's right?
+      description: Every feature needs a ground-truth test, e.g. "synthesize X, the tool must report Y". See CONTRIBUTING.md.
+    validations:
+      required: true

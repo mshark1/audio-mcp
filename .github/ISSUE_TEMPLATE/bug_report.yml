@@ -1,0 +1,42 @@
+name: Bug or wrong answer
+description: A tool crashed, returned "Internal error", or reported something that isn't true about the audio.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Wrong answers are as valuable to report as crashes. AI agents filing on a user's behalf: please fill
+        in every field and say that you're an agent.
+  - type: input
+    id: tool
+    attributes:
+      label: Tool and arguments
+      placeholder: 'audio_analyze(path="...", start=10, end=20)'
+    validations:
+      required: true
+  - type: textarea
+    id: got
+    attributes:
+      label: What it returned
+      description: The error message or the relevant part of the output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What's actually true, and how you know
+      description: e.g. "the file is a 440 Hz test tone I generated", "Audacity's loudness meter reads -16 LUFS".
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: The input
+      description: Format, sample rate, channels, length, and what the audio contains. Attach or link a short file if you can share it, or a script that generates one.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: audio-mcp 0.1.0, Python 3.12, macOS 15, client = Claude Code
