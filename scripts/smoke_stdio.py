@@ -72,4 +72,6 @@ async def main(scratch: Path):
 
 
 if __name__ == "__main__":
+    # Tool output contains sparkline characters; Windows consoles may default to a legacy code page.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     asyncio.run(main(Path(sys.argv[1])))
