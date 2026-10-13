@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [0.1.1] - unreleased
+## [0.1.1] - 2026-10-12
 
 Packaging and discoverability only; no changes to tools or their output.
 
