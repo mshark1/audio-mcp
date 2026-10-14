@@ -39,10 +39,10 @@ Real output (JSON abbreviated) from the bundled demo, `scripts/demo.py`:
 | `audio_melody` | Single-line transcription: notes, timings, cents, compact text |
 | `audio_transcribe` | Speech to text with local Whisper: timed words, language, speaking rate, long pauses and **uncertain words** *(optional extra)* |
 | `audio_compare` | A/B summary, metric deltas, per-band dB changes, issues fixed or introduced, and a **null test** (identical? only a gain change? lightly changed?) |
-| `audio_process` | An ordered chain of edits written to a **new** file: gain, peak/LUFS normalize, true-peak limiter, compressor, noise reduction, trim, fades, crop, pad, high/low-pass, peaking EQ, shelves, DC removal, mono/stereo, resample, reverse, seamless-loop crossfade, mix, append |
+| `audio_process` | An ordered chain of edits written to a **new** file: gain, peak/LUFS normalize, true-peak limiter, compressor, noise reduction, RMS normalize, trim, fades, crop, pad, high/low-pass, peaking EQ, shelves, DC removal, polarity, mono/stereo, resample, reverse, seamless-loop crossfade, mix, append |
 | `audio_batch_survey` | Audits a folder for consistency (loudness outliers, mixed sample rates/channels/formats, uneven leading silence) and returns ready-to-run fixes |
 | `audio_batch_process` | Applies one edit chain to many files and writes them to an output folder |
-| `audio_synthesize` | Declarative synth: band-limited oscillators, noise colours, sweeps, ADSR, vibrato, tremolo, filters, pan, note sequences |
+| `audio_synthesize` | Declarative synth: band-limited oscillators with phase control, noise colours (pink/brown loop seamlessly), sweeps, ADSR, vibrato, tremolo, filters, pan, note sequences, plus exact test signals (impulse, DC, silence) |
 | `audio_info` | Metadata for a file, or a listing of the audio files in a folder |
 
 Reads WAV, FLAC, OGG/Vorbis, Opus, MP3, AIFF and CAF (via libsndfile). Convert M4A/AAC with ffmpeg first.
@@ -98,7 +98,8 @@ correctness rather than just "no crash":
 - **Loudness:** our streaming BS.1770 meter matches pyloudnorm's exact-filter mode within 0.01 LU from 8 to 96 kHz,
   and reads the EBU reference tone (997 Hz, 0 dBFS) at −3.01 LUFS.
 - **Limiter:** a +15 dBTP input comes out at exactly −1.0 dBTP with no samples touched by the safety clip.
-- **Pitch and melody:** sines, chirps and synthesized melodies are recovered note for note, including repeated notes.
+- **Pitch and melody:** sines, chirps and synthesized melodies are recovered note for note, including repeated notes;
+  pitch is within 1 cent from 82 Hz to 1760 Hz.
 - **Tempo, onsets, events, silence, stereo phase, hum, clipping, alignment offsets:** each is checked against a
   constructed signal.
 - **A contract test** runs every tool on every content type (silence, DC, noise, full-scale square), length
@@ -127,6 +128,13 @@ correctness rather than just "no crash":
   other voices. Too much `sensitivity` dulls quiet consonants, so verify speech edits with `audio_transcribe`.
 - Tempo is a classic autocorrelation estimate; half- and double-tempo errors happen on complex music.
 - The tools describe sound, but they don't judge taste ("is this satisfying?").
+
+## Reference signals
+
+[audio-mcp-assets](https://github.com/mshark1/audio-mcp-assets) is a public-domain pack of test and calibration
+audio (tones, sweeps, calibrated noise, loudness, stereo and phase tests, impulses, problem files) that an AI agent
+built using only these tools. Every file is verified against known ground truth, twice, including independently of
+this project.
 
 ## Contributing
 

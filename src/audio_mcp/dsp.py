@@ -105,6 +105,26 @@ def true_peak(samples: np.ndarray, sr: int) -> float:
     return peak
 
 
+def octave_flatness(power, freqs) -> np.ndarray:
+    """Spectral flatness (0 = pure tones, ~0.56 = noise) measured within each octave from 62.5 Hz to 16 kHz and
+    energy-weighted. Unlike whole-spectrum flatness it doesn't mistake coloured noise (pink, brown, which slope
+    downward) for tonal sound. `power` is (bins,) or (frames, bins)."""
+    p = np.atleast_2d(power)
+    edges = 62.5 * 2.0 ** np.arange(9)
+    total = np.zeros(len(p))
+    weight = np.zeros(len(p))
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        band = (freqs >= lo) & (freqs < hi)
+        if band.sum() < 4:
+            continue
+        pb = p[:, band] + 1e-20
+        energy = pb.sum(axis=1)
+        total += energy * np.exp(np.mean(np.log(pb), axis=1)) / np.mean(pb, axis=1)
+        weight += energy
+    out = total / np.maximum(weight, 1e-30)
+    return out if np.ndim(power) == 2 else out[0]
+
+
 def runs(mask) -> list[tuple[int, int]]:
     """[start, end) index pairs for each run of True values."""
     m = np.concatenate(([False], np.asarray(mask, dtype=bool), [False]))

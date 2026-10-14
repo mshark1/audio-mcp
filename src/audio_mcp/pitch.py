@@ -66,7 +66,10 @@ def track(mono, sr: int, fmin: float = 50.0, fmax: float = 2000.0, threshold: fl
             t = min_tau + int(below[0])
             while t + 1 <= max_tau and row[t + 1] < row[t]:
                 t += 1
-            tau, val = parabolic(row, t)
+            # Refine the period on the raw difference function: interpolating the normalised curve is biased
+            # sharp when the period spans few samples (+10 cents at 1.7 kHz); the raw curve stays within ~0.6.
+            tau, _ = parabolic(d[i], t)
+            val = row[t]
             f0[c0 + i] = PITCH_SR / tau
             conf[c0 + i] = float(np.clip(1.0 - val, 0.0, 1.0))
 

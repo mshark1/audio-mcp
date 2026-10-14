@@ -7,9 +7,10 @@ import numpy as np
 from . import pitch as pitch_mod
 from .analysis import _brightness_word, onset_envelope, pick_onsets
 from .audio_io import Audio
-from .dsp import amp_db, describe_hz, frame_rms, pow_db, r, runs
+from .dsp import amp_db, describe_hz, frame_rms, octave_flatness, pow_db, r, runs
 
 HOP_S = 0.01
+MIN_SPLIT_S = 0.03
 
 
 def _describe(x: np.ndarray, sr: int, f0_times, f0, a: int, b: int, offset: float, lv: np.ndarray, hop: int) -> dict:
@@ -19,9 +20,7 @@ def _describe(x: np.ndarray, sr: int, f0_times, f0, a: int, b: int, offset: floa
     freqs = np.fft.rfftfreq(n_fft, 1 / sr)
     mag = np.sqrt(spec)
     centroid = float(np.sum(freqs * mag) / max(np.sum(mag), 1e-12))
-    band = (freqs >= 50) & (freqs <= min(16000, sr / 2))
-    pb = spec[band] + 1e-20
-    flatness = float(np.exp(np.mean(np.log(pb))) / np.mean(pb))
+    flatness = float(octave_flatness(spec, freqs))
     fl, fr = a // hop, max(a // hop + 1, b // hop)
     env = lv[fl:fr]
     attack_i = int(np.argmax(env >= env.max() - 3.0))  # time to come within 3 dB of the peak
@@ -68,13 +67,14 @@ def detect_events(
     threshold_db: float | None = None,
     split_on_onsets: bool = True,
     min_gap_s: float = 0.05,
-    min_dur_s: float = 0.03,
+    min_dur_s: float = 0.01,  # clicks and ticks are real events; one 10 ms frame is enough
     max_events: int = 200,
 ) -> dict:
     """Find sound events with hysteresis on the level envelope, optionally split at onsets."""
     x, sr = audio.mono, audio.sr
     hop = max(1, int(HOP_S * sr))
-    lv = amp_db(frame_rms(x, 2 * hop, hop))
+    # Pad so the final partial frame is measured too; otherwise a sound in the last few ms is invisible.
+    lv = amp_db(frame_rms(np.pad(x, (0, 2 * hop)), 2 * hop, hop))
     floor = float(np.percentile(lv, 10))
     top = float(np.percentile(lv, 99.5))
     if threshold_db is not None:
@@ -105,7 +105,9 @@ def detect_events(
     if split_on_onsets:
         env, times, fps = onset_envelope(x, sr)
         onset_frames = np.round(times[pick_onsets(env, fps)] / HOP_S).astype(int)
-        min_len = max(1, int(round(min_dur_s / HOP_S)))
+        # Splitting inside a sound needs longer pieces than a standalone event: a 4 ms click is an event, but a
+        # glide or decay shouldn't be chopped into 10 ms fragments.
+        min_len = max(1, int(round(max(min_dur_s, MIN_SPLIT_S) / HOP_S)))
         split = []
         for a, b in merged:
             cuts = [a] + [int(o) for o in onset_frames if a + min_len <= o <= b - min_len] + [b]

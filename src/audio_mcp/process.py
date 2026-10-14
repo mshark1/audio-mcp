@@ -64,6 +64,16 @@ def _normalize_peak(x, sr, db=-1.0):
 
 
 @op
+def _normalize_rms(x, sr, db=-20.0):
+    """Scale so the RMS level (all channels together) is `db` dBFS, e.g. -20 for calibration noise."""
+    ms = float(np.mean(np.square(x, dtype=np.float64)))
+    if ms == 0:
+        raise AudioError("Can't normalize silence.")
+    g = db - 10 * np.log10(ms)
+    return x * 10 ** (g / 20), sr, f"normalize_rms to {db:g} dBFS ({g:+.2f} dB)"
+
+
+@op
 def _normalize_lufs(x, sr, lufs=-16.0, ceiling_db=-1.0, limit=False):
     """Scale to an integrated loudness target. Peaks never exceed `ceiling_db`: by default the gain is capped;
     with limit=true a true-peak limiter holds the peaks down so the loudness target is reached."""
@@ -266,6 +276,18 @@ def _high_shelf(x, sr, hz, db):
 def _remove_dc(x, sr):
     """Subtract each channel's mean."""
     return x - x.mean(axis=0, keepdims=True), sr, "remove_dc"
+
+
+@op
+def _polarity(x, sr, channel=None):
+    """Invert polarity (multiply by -1): every channel, or only `channel` (0 = left, 1 = right)."""
+    x = x.copy()
+    if channel is None:
+        return -x, sr, "polarity inverted (all channels)"
+    if not 0 <= int(channel) < x.shape[1]:
+        raise AudioError(f"channel must be between 0 and {x.shape[1] - 1} for this {x.shape[1]}-channel audio.")
+    x[:, int(channel)] *= -1
+    return x, sr, f"polarity inverted on channel {int(channel)}"
 
 
 @op

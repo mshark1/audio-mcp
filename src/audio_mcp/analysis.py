@@ -15,6 +15,7 @@ from .dsp import (
     amp_db,
     describe_hz,
     frame_rms,
+    octave_flatness,
     parabolic,
     pow_db,
     r,
@@ -34,6 +35,7 @@ BANDS = (
     ("brilliance", 6000, 20000),
 )
 SILENCE_DB = -60.0
+PHASE_PROBLEM_CORRELATION = -0.3  # below this, mono playback loses substantial level
 LOUDNESS_TARGETS = "typical targets: -14 LUFS music streaming, -16 podcasts/voice, -23 broadcast (EBU R128)"
 
 
@@ -52,7 +54,6 @@ def spectral_profile(mono, sr: int, n_fft: int = 8192, hop: int = 2048) -> Spect
     freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
     window = np.hanning(n_fft)
     scale = 2.0 / (n_fft * np.sum(window**2))
-    band = (freqs >= 50) & (freqs <= min(16000, sr / 2))
     total = np.zeros(len(freqs))
     count = 0
     flat, level = [], []
@@ -61,8 +62,7 @@ def spectral_profile(mono, sr: int, n_fft: int = 8192, hop: int = 2048) -> Spect
         total += p.sum(axis=0)
         count += len(p)
         level.append(pow_db(p.sum(axis=1)))
-        pb = p[:, band] + 1e-20
-        flat.append(np.exp(np.mean(np.log(pb), axis=1)) / np.mean(pb, axis=1))
+        flat.append(octave_flatness(p, freqs))
     return SpectralProfile(freqs, total / max(count, 1), np.concatenate(flat), np.concatenate(level))
 
 
@@ -254,9 +254,10 @@ def stereo_stats(x: np.ndarray) -> dict:
         width = "mono (identical channels)"
     elif corr is None:
         width = "one channel silent"
-    elif corr < 0:
+    elif corr < PHASE_PROBLEM_CORRELATION:
         width = "phase problem (negative correlation)"
     else:
+        # Near-zero correlation is normal for wide material (stereo reverb, spaced mics, independent noise).
         width = "narrow" if corr > 0.9 else "moderate" if corr > 0.5 else "wide"
     return {
         "correlation": r(corr, 3),
@@ -292,9 +293,10 @@ def pick_onsets(env, fps: float) -> np.ndarray:
     if spread <= 1e-4:
         return np.array([], dtype=int)
     local = ndimage.median_filter(env, size=max(3, int(0.5 * fps)) | 1, mode="constant", cval=0.0)
-    # find_peaks never reports index 0, so prepend a zero to catch a sound that starts the file.
-    padded = np.concatenate(([0.0], env))
-    height = np.concatenate(([np.inf], local + 0.15 * spread))
+    # find_peaks never reports the first or last sample, so pad both ends with zeros to catch a sound that starts
+    # or ends the file.
+    padded = np.concatenate(([0.0], env, [0.0]))
+    height = np.concatenate(([np.inf], local + 0.15 * spread, [np.inf]))
     peaks, _ = signal.find_peaks(padded, height=height, distance=max(1, int(0.05 * fps)))
     return peaks - 1
 
@@ -419,10 +421,11 @@ def find_issues(rep: dict) -> list[dict]:
 
     st = rep.get("stereo")
     if st:
-        if st["correlation"] is not None and st["correlation"] < 0:
+        if st["correlation"] is not None and st["correlation"] < PHASE_PROBLEM_CORRELATION:
             add(
                 "error",
-                f"Channels are out of phase (correlation {st['correlation']}); the sound will cancel when played in mono.",
+                f"Channels are out of phase (correlation {st['correlation']}); summed to mono the level changes by "
+                f"{st['mono_sum_change_db']} dB, so it will thin out or vanish on mono speakers.",
             )
         if st["width"].startswith("mono"):
             add("info", "Both channels are identical; the file could be saved as mono at half the size.")

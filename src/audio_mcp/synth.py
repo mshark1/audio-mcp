@@ -8,15 +8,20 @@ from scipy import signal
 from .audio_io import AudioError
 from .dsp import amp_db, parse_freq
 
-WAVES = ("sine", "square", "saw", "triangle", "noise", "pink", "brown")
+WAVES = ("sine", "square", "saw", "triangle", "noise", "pink", "brown", "impulse", "dc", "silence")
+NOISES = ("noise", "pink", "brown")
+TEST_SIGNALS = ("impulse", "dc", "silence")  # exact signals: no default fade unless an envelope is given
 MAX_DURATION = 600.0
 MAX_HARMONICS = 300
 
 SPEC_HELP = """spec = {
   "sample_rate": 44100, "duration": <seconds, default: end of last layer>, "normalize_peak_db": -1 (null to skip),
   "layers": [{
-    "wave": "sine|square|saw|triangle|noise|pink|brown",
-    "freq": 440 or "A4", "freq_end": <optional sweep target>, "sweep": "exp|linear",
+    "wave": "sine|square|saw|triangle|noise|pink|brown|impulse|dc|silence",
+        # pink/brown are generated circularly, so they loop seamlessly as-is.
+        # impulse: one full-scale sample at the layer start, or a train with "freq" impulses per second.
+        # dc: a constant offset (level set by gain_db; 0 dB = +1.0). silence: exact zeros.
+    "freq": 440 or "A4", "freq_end": <optional sweep target>, "sweep": "exp|linear", "phase": <start phase, degrees>,
     "start": 0, "duration": <seconds>, "gain_db": 0, "pan": -1..1,
     "envelope": {"attack": 0.005, "decay": 0, "sustain": 1, "release": 0.01},
     "vibrato": {"rate_hz": 5, "depth_cents": 20}, "tremolo": {"rate_hz": 6, "depth": 0.5},
@@ -54,15 +59,28 @@ def _colored_noise(n, rng, exponent):
     return y / (np.max(np.abs(y)) or 1.0)
 
 
-def _oscillator(wave, freq, sr, rng):
-    n = len(freq)
+def _oscillator(wave, freq, sr, rng, phase_deg=0.0, n=None):
+    n = len(freq) if freq is not None else n
+    if wave == "silence":
+        return np.zeros(n)
+    if wave == "dc":
+        return np.ones(n)
+    if wave == "impulse":
+        out = np.zeros(n)
+        if freq is None:
+            out[0] = 1.0
+        else:  # an impulse at the start of every period
+            cycles = np.floor(np.concatenate(([0.0], np.cumsum(freq[:-1]) / sr)) + 1e-9)
+            out[np.flatnonzero(np.diff(np.concatenate(([-1.0], cycles))) > 0)] = 1.0
+        return out
     if wave == "noise":
         return np.clip(rng.standard_normal(n) / 3.0, -1, 1)
     if wave == "pink":
         return _colored_noise(n, rng, 0.5)
     if wave == "brown":
         return _colored_noise(n, rng, 1.0)
-    phase = 2 * np.pi * np.cumsum(freq) / sr
+    # Start exactly at phase_deg on the first sample (cumulative phase of the preceding samples only).
+    phase = 2 * np.pi * np.concatenate(([0.0], np.cumsum(freq[:-1]))) / sr + np.deg2rad(phase_deg)
     if wave == "sine":
         return np.sin(phase)
     nyq = sr / 2
@@ -96,8 +114,8 @@ def _render_layer(layer, sr, rng):
     if n <= 0:
         return np.zeros(0)
     t = np.arange(n) / sr
-    if wave in ("noise", "pink", "brown"):
-        freq = np.ones(n)
+    if wave in NOISES or wave in ("dc", "silence") or (wave == "impulse" and "freq" not in layer):
+        freq = np.ones(n) if wave != "impulse" else None
     else:
         if "freq" not in layer:
             raise AudioError(f"Layer with wave '{wave}' needs a 'freq' (Hz or note name like 'A4').")
@@ -115,7 +133,7 @@ def _render_layer(layer, sr, rng):
             freq = freq * 2 ** (
                 float(vib.get("depth_cents", 20)) / 1200 * np.sin(2 * np.pi * float(vib.get("rate_hz", 5)) * t)
             )
-    y = _oscillator(wave, freq, sr, rng)
+    y = _oscillator(wave, freq, sr, rng, float(layer.get("phase", 0.0)), n)
     for key, btype in (("highpass", "highpass"), ("lowpass", "lowpass")):
         if layer.get(key):
             hz = float(layer[key])
@@ -126,7 +144,9 @@ def _render_layer(layer, sr, rng):
     if trem:
         depth = float(trem.get("depth", 0.5))
         y = y * (1 - depth / 2 + depth / 2 * np.sin(2 * np.pi * float(trem.get("rate_hz", 6)) * t))
-    return y * _envelope(n, sr, layer.get("envelope")) * 10 ** (float(layer.get("gain_db", 0)) / 20)
+    if wave not in TEST_SIGNALS or "envelope" in layer:
+        y = y * _envelope(n, sr, layer.get("envelope"))
+    return y * 10 ** (float(layer.get("gain_db", 0)) / 20)
 
 
 def _expand_sequences(layers):

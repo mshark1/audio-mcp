@@ -379,3 +379,103 @@ def test_events_on_continuous_melody(tmp_path):
     assert [e["start_s"] for e in ev["events"]] == pytest.approx([0.0, 0.3, 0.6, 0.9, 1.2], abs=0.04)
     silent = write(tmp_path / "silent.wav", np.zeros(SR))
     assert server.audio_events(silent)["event_count"] == 0
+
+
+@pytest.mark.parametrize("hz", [82.41, 220.0, 440.0, 997.0, 1760.0])
+def test_pitch_accuracy_within_one_cent(hz):
+    """Found while building the reference-signal pack: interpolating YIN's normalised curve read 1760 Hz 10 cents sharp."""
+    from audio_mcp import pitch
+
+    sr = 48000
+    times, f0, _ = pitch.track(sine(hz, 2.0, 0.5, sr=sr), sr)
+    assert abs(1200 * np.log2(np.nanmedian(f0) / hz)) < 1.0
+
+
+@pytest.mark.parametrize("wave", ["noise", "pink", "brown"])
+def test_coloured_noise_is_noise_like(tmp_path, wave):
+    """Whole-spectrum flatness called pink 'mixed' and brown 'tonal'; per-octave flatness gets every colour right."""
+    out = tmp_path / f"{wave}.wav"
+    server.audio_synthesize({"seed": 1, "layers": [{"wave": wave, "duration": 3}]}, str(out))
+    assert server.audio_analyze(str(out), pitch=False, rhythm=False)["spectrum"]["character"] == "noise-like"
+
+
+def test_tones_stay_tonal(tmp_path):
+    out = tmp_path / "saw.wav"
+    server.audio_synthesize({"layers": [{"wave": "saw", "freq": 110, "duration": 2}]}, str(out))
+    assert server.audio_analyze(str(out), pitch=False, rhythm=False)["spectrum"]["character"] == "tonal"
+
+
+def test_uncorrelated_stereo_is_wide_not_a_phase_error(tmp_path):
+    """Independent channels have correlation ~0 (often slightly negative); that's wide stereo, not a fault."""
+    out = tmp_path / "wide.wav"
+    server.audio_synthesize(
+        {
+            "seed": 5,
+            "layers": [{"wave": "noise", "duration": 4, "pan": -1}, {"wave": "noise", "duration": 4, "pan": 1}],
+        },
+        str(out),
+    )
+    rep = server.audio_analyze(str(out), pitch=False, rhythm=False)
+    assert abs(rep["stereo"]["correlation"]) < 0.05
+    assert rep["stereo"]["width"] == "wide"
+    assert "out of phase" not in issue_text(rep)
+
+
+def test_clicks_count_as_events_including_one_at_the_very_end(tmp_path):
+    """A 4 ms click is an event, and a click in the final frames is an onset (mirror of the t=0 edge case)."""
+    seq = [["x", 0.004], ["rest", 0.496]] * 7 + [["x", 0.004]]  # 8 clicks, the last one ends the file
+    out = tmp_path / "clicks.wav"
+    server.audio_synthesize(
+        {
+            "seed": 6,
+            "layers": [
+                {"wave": "noise", "highpass": 1000, "sequence": seq, "envelope": {"attack": 0.0005, "release": 0.003}}
+            ],
+        },
+        str(out),
+    )
+    assert server.audio_analyze(str(out), pitch=False)["rhythm"]["onset_count"] == 8
+    assert server.audio_events(str(out))["event_count"] == 8
+
+
+def test_test_signal_waves_are_exact():
+    x, sr = synthesize(
+        {"sample_rate": 48000, "normalize_peak_db": None, "layers": [{"wave": "impulse", "duration": 1}]}
+    )
+    assert np.flatnonzero(x[:, 0]).tolist() == [0] and x[0, 0] == 1.0
+    x, _ = synthesize(
+        {"sample_rate": 48000, "normalize_peak_db": None, "layers": [{"wave": "impulse", "freq": 4, "duration": 1}]}
+    )
+    assert np.flatnonzero(x[:, 0]).tolist() == [0, 12000, 24000, 36000]
+    x, _ = synthesize({"normalize_peak_db": None, "layers": [{"wave": "dc", "duration": 0.1, "gain_db": -20}]})
+    assert np.allclose(x, 0.1)
+    x, _ = synthesize({"normalize_peak_db": None, "layers": [{"wave": "silence", "duration": 0.5}]})
+    assert not x.any()
+
+
+def test_oscillator_phase_and_intersample_peak(tmp_path):
+    """fs/4 sine at 45 degrees: samples sit at +-0.707 of the true peak, so true peak is 3.01 dB above sample peak.
+    Short fades matter: an abruptly cut sine really does overshoot further (+0.1 dB) at its edges."""
+    out = tmp_path / "isp.wav"
+    spec = {
+        "sample_rate": 48000,
+        "normalize_peak_db": -1,
+        "layers": [
+            {"wave": "sine", "freq": 12000, "phase": 45, "duration": 1, "envelope": {"attack": 0.01, "release": 0.01}}
+        ],
+    }
+    server.audio_synthesize(spec, str(out))
+    lv = server.audio_analyze(str(out), pitch=False, rhythm=False)["levels"]
+    assert lv["peak_dbfs"] == pytest.approx(-1.0, abs=0.01)
+    assert lv["true_peak_dbtp"] == pytest.approx(2.01, abs=0.05)
+
+
+def test_polarity_and_normalize_rms(tmp_path):
+    out = tmp_path / "st.wav"
+    server.audio_synthesize({"stereo": True, "layers": [{"wave": "sine", "freq": 300, "duration": 2}]}, str(out))
+    res = server.audio_process(str(out), [{"op": "polarity", "channel": 1}, {"op": "normalize_rms", "db": -20}])
+    rep = server.audio_analyze(res["output"], pitch=False, rhythm=False)
+    assert rep["stereo"]["correlation"] == pytest.approx(-1.0, abs=0.001)
+    assert rep["levels"]["rms_dbfs"] == pytest.approx(-20.0, abs=0.01)
+    with pytest.raises(AudioError, match="channel must be between 0 and 1"):
+        server.audio_process(str(out), [{"op": "polarity", "channel": 2}])
