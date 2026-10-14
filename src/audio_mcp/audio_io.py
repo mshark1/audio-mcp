@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import atexit
+import contextlib
+import itertools
+import json
 import os
+import shutil
+import subprocess
+import tempfile
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -23,6 +32,25 @@ DEFAULT_SUBTYPES = {
     ".mp3": "MPEG_LAYER_III",
 }
 FLOAT_SUBTYPES = {"FLOAT", "DOUBLE"}
+
+# Containers libsndfile can't read. They're decoded with FFmpeg when it's installed.
+FFMPEG_EXTENSIONS = {
+    ".m4a", ".m4b", ".mp4", ".m4v", ".aac", ".mov", ".3gp", ".webm", ".mkv", ".mka",
+    ".wma", ".wmv", ".asf", ".avi", ".flv", ".ac3", ".amr",
+}  # fmt: skip
+NATIVE_FORMATS = "WAV, FLAC, OGG/Vorbis, Opus, MP3, AIFF, CAF"
+FFMPEG_INSTALL_HINT = (
+    "Install FFmpeg and restart the MCP server: Windows `winget install Gyan.FFmpeg` (or `choco install ffmpeg`), "
+    "macOS `brew install ffmpeg`, Debian/Ubuntu `sudo apt install ffmpeg`. Or set AUDIO_MCP_FFMPEG to the path of "
+    "the ffmpeg executable."
+)
+# Demuxers FFmpeg may use on user files. Playlist-style formats (hls, concat, ...) are left out so a file can't make
+# FFmpeg open other files, and -protocol_whitelist file keeps it off the network.
+FFMPEG_DEMUXERS = (
+    "mov,matroska,webm,asf,avi,flv,aac,ac3,eac3,amr,wav,w64,mp3,flac,ogg,aiff,caf,mpeg,mpegts,wv,ape,dts,"
+    "truehd,mlp,tta,au,voc,rm,dsf,loas,latm"
+)
+FFMPEG_CACHE_MAX_FILES = 16
 
 
 def max_seconds() -> float:
@@ -82,39 +110,290 @@ def resolve_path(path: str | os.PathLike) -> Path:
     return p
 
 
-def _info(p: Path):
+# ---------------------------------------------------------------------------------------------------------------
+# FFmpeg input: formats libsndfile can't read are decoded once to a temporary float WAV and cached for the process.
+
+
+def _executable(env_var: str) -> str | None:
+    value = os.environ.get(env_var, "").strip()
+    if not value:
+        return None
+    p = Path(value).expanduser()
+    return str(p) if p.is_file() else shutil.which(value)
+
+
+def ffmpeg_path() -> str | None:
+    """AUDIO_MCP_FFMPEG if set, else `ffmpeg` on PATH. Looked up on every call."""
+    if os.environ.get("AUDIO_MCP_FFMPEG", "").strip():
+        return _executable("AUDIO_MCP_FFMPEG")
+    return shutil.which("ffmpeg")
+
+
+def ffprobe_path(ffmpeg: str) -> str | None:
+    """AUDIO_MCP_FFPROBE, else ffprobe next to ffmpeg, else (when ffmpeg came from PATH) ffprobe on PATH."""
+    if os.environ.get("AUDIO_MCP_FFPROBE", "").strip():
+        return _executable("AUDIO_MCP_FFPROBE")
+    f = Path(ffmpeg)
+    sibling = f.with_name("ffprobe" + f.suffix)
+    if sibling.is_file():
+        return str(sibling)
+    return None if os.environ.get("AUDIO_MCP_FFMPEG", "").strip() else shutil.which("ffprobe")
+
+
+def readable_extensions() -> set[str]:
+    """Extensions the tools can open right now (FFmpeg formats only when FFmpeg is available)."""
+    return AUDIO_EXTENSIONS | FFMPEG_EXTENSIONS if ffmpeg_path() else set(AUDIO_EXTENSIONS)
+
+
+def _ffmpeg_timeout() -> float:
+    return float(os.environ.get("AUDIO_MCP_FFMPEG_TIMEOUT", 300))
+
+
+def _cache_limit_bytes() -> int:
+    return int(float(os.environ.get("AUDIO_MCP_FFMPEG_CACHE_MB", 2048)) * 2**20)
+
+
+@dataclass
+class _Decoded:
+    path: Path
+    size: int
+    codec: str
+
+
+_cache: OrderedDict[tuple, _Decoded] = OrderedDict()
+_cache_lock = threading.Lock()
+_cache_dir: Path | None = None
+_counter = itertools.count()
+
+
+def _get_cache_dir() -> Path:
+    global _cache_dir
+    if _cache_dir is None or not _cache_dir.is_dir():
+        _cache_dir = Path(tempfile.mkdtemp(prefix="audio-mcp-ffmpeg-"))
+        atexit.register(shutil.rmtree, _cache_dir, ignore_errors=True)
+    return _cache_dir
+
+
+def _unlink(p: Path):
+    with contextlib.suppress(OSError):  # still open somewhere (Windows); the atexit cleanup removes it later
+        p.unlink(missing_ok=True)
+
+
+def clear_ffmpeg_cache():
+    with _cache_lock:
+        for entry in _cache.values():
+            _unlink(entry.path)
+        _cache.clear()
+
+
+def _evict():
+    """Drop least recently used decodes beyond the count and size caps. The newest entry always stays."""
+    limit = _cache_limit_bytes()
+    while len(_cache) > 1 and (len(_cache) > FFMPEG_CACHE_MAX_FILES or sum(e.size for e in _cache.values()) > limit):
+        _, old = _cache.popitem(last=False)
+        _unlink(old.path)
+
+
+def _run(cmd: list[str], timeout: float) -> tuple[int, str, bytes]:
+    """Run without a shell. stderr goes to a file rather than a pipe, so a timeout can't then hang waiting for a
+    grandchild process that still holds the pipe open."""
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, timeout=timeout)
+        err.seek(0)
+        return proc.returncode, err.read().decode("utf-8", "replace"), proc.stdout
+
+
+def _tail(text: str, n: int = 300) -> str:
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    msg = " | ".join(lines[-3:])
+    return msg[-n:] if msg else "no error message"
+
+
+def _probe(p: Path, ffmpeg: str) -> dict:
+    """Codec and first-audio-stream facts from ffprobe, if installed. Optional: returns {} on any problem."""
+    probe = ffprobe_path(ffmpeg)
+    if not probe:
+        return {}
+    cmd = [
+        probe, "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", FFMPEG_DEMUXERS,
+        "-select_streams", "a:0", "-show_entries", "stream=codec_name,sample_rate,channels,duration:format=duration",
+        "-of", "json", f"file:{p}",
+    ]  # fmt: skip
+    try:
+        code, _, out = _run(cmd, timeout=min(30.0, _ffmpeg_timeout()))
+        if code != 0:
+            return {}
+        data = json.loads(out.decode("utf-8", "replace"))
+        streams = data.get("streams") or []
+        if not streams:
+            return {}
+        st, fmt = streams[0], data.get("format") or {}
+        dur = st.get("duration") or fmt.get("duration")
+        return {
+            "codec": str(st.get("codec_name") or ""),
+            "sample_rate": int(st["sample_rate"]) if st.get("sample_rate") else None,
+            "channels": int(st["channels"]) if st.get("channels") else None,
+            "duration": float(dur) if dur not in (None, "N/A") else None,
+        }
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
+        return {}
+
+
+def _decode(p: Path, ffmpeg: str) -> _Decoded:
+    """Decode p (which has already passed resolve_path) to a float WAV, cached per (path, size, mtime)."""
+    st = p.stat()
+    key = (str(p), st.st_size, st.st_mtime_ns)
+    with _cache_lock:  # also serializes decodes, so two calls never decode the same file at once
+        hit = _cache.get(key)
+        if hit is not None and hit.path.is_file():
+            _cache.move_to_end(key)
+            return hit
+        out = _get_cache_dir() / f"{next(_counter)}.wav"
+        limit = _cache_limit_bytes()
+        cmd = [
+            ffmpeg, "-nostdin", "-hide_banner", "-v", "error",
+            "-protocol_whitelist", "file", "-format_whitelist", FFMPEG_DEMUXERS,
+            "-i", f"file:{p}",  # "file:" so a name like "http:..." or "pipe:..." is never taken as a protocol
+            "-map", "0:a:0", "-c:a", "pcm_f32le", "-rf64", "auto", "-fs", str(limit),
+            "-f", "wav", "-y", f"file:{out}",
+        ]  # fmt: skip
+        timeout = _ffmpeg_timeout()
+        try:
+            code, err, _ = _run(cmd, timeout)
+        except subprocess.TimeoutExpired:
+            _unlink(out)
+            raise AudioError(
+                f"FFmpeg took longer than {timeout:g}s to decode '{p.name}' and was stopped. Convert it to WAV or "
+                "FLAC yourself, or raise the limit with the AUDIO_MCP_FFMPEG_TIMEOUT environment variable (seconds)."
+            ) from None
+        except OSError as e:
+            raise AudioError(
+                f"Could not run FFmpeg ({ffmpeg}): {e}. Check AUDIO_MCP_FFMPEG or reinstall FFmpeg."
+            ) from None
+        size = out.stat().st_size if out.is_file() else 0
+        if code != 0 or size <= 44:
+            _unlink(out)
+            raise AudioError(
+                f"Could not decode '{p.name}': FFmpeg failed ({_tail(err)}). The file may be corrupt, have no audio "
+                "track, be DRM-protected, or use a container this server doesn't open."
+            )
+        if size >= 0.99 * limit:  # -fs stopped the output: don't silently analyze a truncated file
+            _unlink(out)
+            raise AudioError(
+                f"'{p.name}' decodes to more than {limit / 2**20:.0f} MB, the FFmpeg cache limit. Convert it to FLAC "
+                "yourself, or raise AUDIO_MCP_FFMPEG_CACHE_MB."
+            )
+        entry = _Decoded(out, size, _probe(p, ffmpeg).get("codec", ""))
+        _cache[key] = entry
+        _evict()
+        return entry
+
+
+@dataclass
+class Source:
+    """A user file and what soundfile should read for it: the file itself, or its FFmpeg-decoded WAV."""
+
+    path: Path
+    read_path: Path
+    info: object  # soundfile info of read_path
+    format: str
+    subtype: str
+    via_ffmpeg: bool = False
+
+
+def _label(p: Path) -> str:
+    return p.suffix[1:].upper() or "this file"
+
+
+def _undecodable(p: Path, native_error: Exception | None) -> AudioError:
+    """The error for a file libsndfile can't read when FFmpeg isn't available."""
+    env = os.environ.get("AUDIO_MCP_FFMPEG", "").strip()
+    missing = (
+        f"AUDIO_MCP_FFMPEG is set to '{env}', which is not an executable file."
+        if env
+        else "FFmpeg was not found on PATH."
+    )
+    if native_error is None:
+        return AudioError(
+            f"Could not decode '{p.name}': {_label(p)} files are read through FFmpeg, and {missing} "
+            f"{FFMPEG_INSTALL_HINT} Without FFmpeg, supported formats are {NATIVE_FORMATS}."
+        )
+    return AudioError(
+        f"Could not decode '{p.name}' ({native_error}). Supported: {NATIVE_FORMATS}. Other formats (M4A/AAC, WMA, "
+        f"MP4/MOV/WebM video) open automatically when FFmpeg is installed; {missing} {FFMPEG_INSTALL_HINT}"
+    )
+
+
+def _native_info(p: Path):
+    """(soundfile info, None) if libsndfile reads p, else (None, error). Known FFmpeg-only containers skip it."""
     if not p.is_file():
         raise AudioError(f"File not found: {p}")
+    if p.suffix.lower() in FFMPEG_EXTENSIONS:
+        return None, None
     try:
-        return sf.info(str(p))
+        return sf.info(str(p)), None
     except Exception as e:
-        raise AudioError(
-            f"Could not decode '{p.name}' ({e}). Supported: WAV, FLAC, OGG/Vorbis, Opus, MP3, AIFF, CAF. "
-            "Convert other formats (M4A/AAC, WMA, video files) to WAV first, e.g. `ffmpeg -i in.m4a out.wav`."
-        ) from None
+        return None, e
+
+
+def open_source(p: Path) -> Source:
+    """How to read p (which has already passed resolve_path): directly, or decoded by FFmpeg if libsndfile can't."""
+    info, err = _native_info(p)
+    if info is not None:
+        return Source(p, p, info, info.format, info.subtype)
+    ffmpeg = ffmpeg_path()
+    if ffmpeg is None:
+        raise _undecodable(p, err)
+    dec = _decode(p, ffmpeg)
+    try:
+        info = sf.info(str(dec.path))
+    except Exception as e:
+        raise AudioError(f"Could not read FFmpeg's output for '{p.name}': {e}") from None
+    return Source(p, dec.path, info, _label(p), dec.codec.upper(), via_ffmpeg=True)
 
 
 def file_info(path) -> dict:
     p = resolve_path(path)
-    info = _info(p)
-    return {
+    info, err = _native_info(p)
+    if info is not None:
+        fmt, subtype, sr, ch, dur = info.format, info.subtype, info.samplerate, info.channels, info.duration
+    else:
+        ffmpeg = ffmpeg_path()
+        if ffmpeg is None:
+            raise _undecodable(p, err)
+        probe = _probe(p, ffmpeg)  # fast: ffprobe reads headers only
+        if probe.get("sample_rate") and probe.get("channels") and probe.get("duration") is not None:
+            subtype, sr, ch, dur = probe["codec"].upper(), probe["sample_rate"], probe["channels"], probe["duration"]
+        else:  # no ffprobe: decode (cached, so the next tool call on this file reuses it)
+            src = open_source(p)
+            subtype, sr, ch, dur = src.subtype, src.info.samplerate, src.info.channels, src.info.duration
+        fmt = _label(p)
+    out = {
         "path": str(p),
-        "format": info.format,
-        "subtype": info.subtype,
-        "sample_rate": info.samplerate,
-        "channels": info.channels,
-        "duration_s": round(info.duration, 3),
+        "format": fmt,
+        "subtype": subtype,
+        "sample_rate": sr,
+        "channels": ch,
+        "duration_s": round(dur, 3),
         "size_bytes": p.stat().st_size,
     }
+    if info is None:
+        out["decoded_via"] = "ffmpeg"
+    return out
 
 
 def list_audio(directory, limit: int = 200) -> dict:
     d = resolve_path(directory)
     if not d.is_dir():
         raise AudioError(f"Not a directory: {d}")
-    files, errors = [], []
+    have_ffmpeg = ffmpeg_path() is not None
+    files, errors, need_ffmpeg = [], [], []
     for p in sorted(d.rglob("*")):
-        if p.suffix.lower() not in AUDIO_EXTENSIONS or not p.is_file():
+        ext = p.suffix.lower()
+        if (ext not in AUDIO_EXTENSIONS and ext not in FFMPEG_EXTENSIONS) or not p.is_file():
+            continue
+        if ext in FFMPEG_EXTENSIONS and not have_ffmpeg:
+            need_ffmpeg.append(str(p))
             continue
         if len(files) >= limit:
             return {"directory": str(d), "files": files, "truncated": True}
@@ -126,13 +405,19 @@ def list_audio(directory, limit: int = 200) -> dict:
     out = {"directory": str(d), "files": files, "truncated": False}
     if errors:
         out["unreadable"] = errors[:20]
+    if need_ffmpeg:
+        out["needs_ffmpeg"] = {
+            "count": len(need_ffmpeg),
+            "files": need_ffmpeg[:20],
+            "hint": f"These formats open automatically once FFmpeg is installed. {FFMPEG_INSTALL_HINT}",
+        }
     return out
 
 
 def load(path, start: float | None = None, end: float | None = None) -> Audio:
     p = resolve_path(path)
-    info = _info(p)
-    sr, total = info.samplerate, info.duration
+    src = open_source(p)
+    sr, total = src.info.samplerate, src.info.duration
     s = 0.0 if start is None else float(start)
     e = total if end is None else min(float(end), total)
     if s < 0 or s >= total:
@@ -146,7 +431,7 @@ def load(path, start: float | None = None, end: float | None = None) -> Audio:
             "The limit can be raised with the AUDIO_MCP_MAX_SECONDS environment variable."
         )
     stop = None if end is None else int(round(e * sr))
-    data, sr = sf.read(str(p), start=int(round(s * sr)), stop=stop, dtype="float32", always_2d=True)
+    data, sr = sf.read(str(src.read_path), start=int(round(s * sr)), stop=stop, dtype="float32", always_2d=True)
     if len(data) == 0:
         raise AudioError("The selected range contains no samples.")
     bad = ~np.isfinite(data)
@@ -156,7 +441,7 @@ def load(path, start: float | None = None, end: float | None = None) -> Audio:
             f"The audio contains {int(bad.sum())} NaN or infinite sample values (first at {s + first / sr:.3f}s). "
             "The file is corrupt or was written by software that overflowed; re-export it from the source."
         )
-    return Audio(data, sr, p, info.format, info.subtype, s)
+    return Audio(data, sr, p, src.format, src.subtype, s)
 
 
 def default_output(source: Path, tag: str) -> Path:

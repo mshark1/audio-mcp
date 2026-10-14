@@ -21,6 +21,8 @@ numbers, images and note lists you can reason about.
 Typical loop: audio_analyze (measurements + an `issues` list) -> audio_events / audio_view (what happens when) ->
 audio_process (fix, writes a new file) -> audio_compare (verify what changed).
 For many files: audio_batch_survey (consistency + suggested fixes) -> audio_batch_process.
+Reads WAV, FLAC, OGG/Vorbis, Opus, MP3, AIFF, CAF; with FFmpeg installed also M4A/AAC, WMA and the audio of
+video files (MP4, MOV, WebM, MKV). Edited files are written as WAV/FLAC/OGG/AIFF/MP3.
 Use absolute paths. Times are seconds. Levels are dBFS (0 = digital maximum). Loudness references:
 -14 LUFS music streaming, -16 LUFS podcasts/voice, -23 LUFS broadcast (EBU R128).
 Pitch/melody tools assume one note at a time; chords and full mixes give approximate results."""
@@ -60,6 +62,8 @@ def tool(**kwargs):
 @tool(annotations=READ_ONLY)
 def audio_info(path: str) -> dict:
     """Fast metadata without decoding: format, sample rate, channels, duration.
+    Files read through FFmpeg (M4A/AAC, WMA, MP4/MOV/WebM/MKV video) report decoded_via="ffmpeg", the container
+    as format and the codec as subtype; without FFmpeg they fail with install instructions.
     If `path` is a directory, lists the audio files inside it (recursively)."""
     p = audio_io.resolve_path(path)
     return audio_io.list_audio(p) if p.is_dir() else audio_io.file_info(p)
@@ -187,7 +191,7 @@ def audio_process(
     path: str, operations: list[dict], output: str | None = None, overwrite: bool = False, subtype: str | None = None
 ) -> dict:
     """Apply operations in order and write a NEW file (default: <name>_processed.<ext> next to the input;
-    the input is never modified unless output==path and overwrite=true). Each operation is an object, e.g.
+    the input is never modified unless output==path and overwrite=true; M4A/video inputs default to WAV output). Each operation is an object, e.g.
     [{"op":"highpass","hz":80}, {"op":"normalize_lufs","lufs":-16}, {"op":"fade_out","seconds":0.5}].
     Ops: gain(db) normalize_peak(db=-1, true_peak=false) normalize_rms(db=-20)
     normalize_lufs(lufs=-16, ceiling_db=-1, limit=false, measure=integrated|momentary_max) trim_silence(threshold_db=-60, pad_ms=10)

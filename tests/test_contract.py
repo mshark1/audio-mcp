@@ -102,6 +102,20 @@ def test_not_audio_and_bad_ranges(tmp_path):
             server.audio_analyze(str(ok), start=start, end=end)
 
 
+def test_ffmpeg_formats_without_ffmpeg_fail_cleanly(tmp_path, monkeypatch):
+    from audio_mcp import audio_io
+
+    monkeypatch.delenv("AUDIO_MCP_FFMPEG", raising=False)
+    monkeypatch.setattr(audio_io.shutil, "which", lambda *a, **k: None)
+    for name in ("talk.m4a", "clip.mp4", "song.wma", "junk.wav"):
+        path = tmp_path / name
+        path.write_bytes(bytes(256))
+        for fn in (server.audio_info, server.audio_analyze, server.audio_timeline, server.audio_view):
+            with pytest.raises(AudioError) as e:
+                fn(str(path))
+            assert "Internal error" not in str(e.value) and "FFmpeg" in str(e.value)
+
+
 @pytest.mark.parametrize(
     "ops",
     [

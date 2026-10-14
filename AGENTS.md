@@ -11,6 +11,8 @@ src/audio_mcp/
   server.py      MCP tools. Docstrings ARE the user interface for calling agents; edit them with care.
                  The @tool wrapper turns unexpected exceptions into readable "Internal error" messages.
   audio_io.py    load/save, path resolution + AUDIO_MCP_ALLOWED_DIRS sandbox, AudioError (a ToolError).
+                 Formats libsndfile can't read go through FFmpeg (if installed) into a cached temp WAV;
+                 read files via open_source(), never sf.* on the user's path directly.
   dsp.py         shared helpers: dB conversions, chunked STFT/frame RMS/resample, true peak, note names.
   loudness.py    streaming ITU-R BS.1770 integrated loudness (validated against pyloudnorm in tests).
   analysis.py    audio_analyze: levels, spectrum, silence, stereo, rhythm, edges, and find_issues(); timeline.
@@ -28,6 +30,7 @@ tests/
   test_audio_mcp.py  behaviour against ground truth
   test_contract.py   every tool x odd inputs: succeed or AudioError, never an internal error
   test_loudness.py   loudness meter vs. reference; chunked helpers vs. direct computation
+  test_ffmpeg_input.py  FFmpeg decoding via a fake ffmpeg script (runs anywhere) + real round trips (CI, Linux)
 scripts/
   smoke_stdio.py     end-to-end over real MCP stdio
   demo.py            guided demo writing listenable files to demo_output/
@@ -70,4 +73,6 @@ scripts/
 - Wiener gain `1 - N/P` versus `sqrt(1 - N/P)` is a real trade-off between noise removal and keeping consonants.
 - On Windows, Smart App Control can block DLLs from some wheels (PyAV) and from downloaded Python builds; it's
   an OS policy, not a code bug, and shouldn't be worked around.
+- FFmpeg runs as an argument list (never a shell) with the input as `file:<path>`, `-protocol_whitelist file`
+  and a demuxer whitelist, so a crafted file name or playlist can't reach the network or other files. Keep it so.
 - Windows PowerShell 5.1 writes UTF-8 *with BOM* when redirecting output, which breaks TOML and JSON parsers.

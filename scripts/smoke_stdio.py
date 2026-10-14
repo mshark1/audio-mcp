@@ -83,6 +83,13 @@ async def main(scratch: Path, command: list[str]):
             await session.call_tool("audio_process", {"path": zap, "operations": [{"op": "louder"}]}),
             "Unknown op 'louder'",
         )
+        fake_m4a = scratch / "not_really.m4a"
+        fake_m4a.write_bytes(bytes(256))
+        expect_clean_error(  # FFmpeg missing, or FFmpeg can't decode it: either way a clean, explanatory error
+            "undecodable m4a",
+            await session.call_tool("audio_analyze", {"path": str(fake_m4a)}),
+            "FFmpeg",
+        )
         expect_clean_error(
             "missing file",
             await session.call_tool("audio_analyze", {"path": str(scratch / "nope.wav")}),
