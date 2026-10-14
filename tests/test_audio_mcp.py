@@ -341,6 +341,7 @@ def test_mcp_tools_registered():
         "audio_process",
         "audio_synthesize",
         "audio_check_delivery",
+        "audio_check_game_project",
     }
     assert all(t.description for t in tools)
 
