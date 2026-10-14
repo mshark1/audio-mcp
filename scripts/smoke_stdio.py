@@ -83,6 +83,16 @@ async def main(scratch: Path, command: list[str]):
             await session.call_tool("audio_process", {"path": zap, "operations": [{"op": "louder"}]}),
             "Unknown op 'louder'",
         )
+        game = scratch / "godot_game"
+        (game / "audio" / "sfx").mkdir(parents=True, exist_ok=True)
+        (game / "project.godot").write_text("config_version=5\n")
+        (game / "audio" / "sfx" / "zap.wav").write_bytes(Path(zap).read_bytes())
+        expect_ok("game project", await session.call_tool("audio_check_game_project", {"project_dir": str(game)}))
+        expect_clean_error(
+            "not a godot project",
+            await session.call_tool("audio_check_game_project", {"project_dir": str(scratch)}),
+            "No project.godot",
+        )
         expect_clean_error(
             "missing file",
             await session.call_tool("audio_analyze", {"path": str(scratch / "nope.wav")}),

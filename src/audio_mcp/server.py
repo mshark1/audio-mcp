@@ -8,7 +8,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import analysis, audio_io, batch, events, pitch, synth
+from . import analysis, audio_io, batch, events, godot, pitch, synth
 from . import compare as compare_mod
 from . import process as process_mod
 from . import render as render_mod
@@ -227,6 +227,24 @@ def audio_synthesize(spec: dict, output: str, overwrite: bool = False) -> dict:
     x, sr = synth.synthesize(spec)
     written, warnings = audio_io.save(x, sr, output, overwrite=overwrite)
     return {"output": str(written), **analysis.quick_levels(x, sr), "warnings": warnings}
+
+
+@tool(annotations=READ_ONLY)
+def audio_check_game_project(
+    project_dir: str, categories: dict[str, str] | None = None, max_files: int = 150, max_seconds: float = 90.0
+) -> dict:
+    """Audit the audio of a Godot 4 project (the folder with project.godot): inventory of every .wav/.ogg/.mp3 with
+    a category (ui, sfx, voice, music, ambience, inferred from folder/file names; override with `categories`,
+    e.g. {"audio/stingers": "music", "*/click_*": "ui"}), import settings from the .import files (music/ambience
+    that doesn't loop, SFX/UI that do, clicky loop seams, never-imported files), loudness consistency per
+    category (one-shots by LUFS momentary max, music/ambience by integrated LUFS; outliers, median, spread),
+    per-file problems (clipping, leading silence, clicky ends, DC offset, mixed sample rates, stereo SFX) and
+    res:// references in .tscn/.tres/.gd/.cs files (broken paths, wrong letter case, unreferenced files).
+    Returns `summary`, per-category `categories` stats with `suggested_batch` for audio_batch_process, and
+    `issues` sorted problem > warning > info, each with a res:// file and a `fix` (audio_process operations or
+    an editor step). res://x means <project_dir>/x. Read-only: never modifies the project.
+    Analyzes at most max_files files, each over its first max_seconds (loop seams use the real loop points)."""
+    return godot.check_project(project_dir, categories, max_files, max_seconds)
 
 
 def main():
