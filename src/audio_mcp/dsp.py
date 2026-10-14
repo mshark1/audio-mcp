@@ -99,9 +99,12 @@ def true_peak(samples: np.ndarray, sr: int) -> float:
     peak, block, pad = 0.0, 1 << 18, 64
     n = samples.shape[0]
     for start in range(0, n, block):
-        seg = samples[max(0, start - pad) : min(n, start + block + pad)]
-        up = signal.resample_poly(seg, 4, 1, axis=0)
-        peak = max(peak, float(np.max(np.abs(up))))
+        lo, hi = max(0, start - pad), min(n, start + block + pad)
+        up = signal.resample_poly(samples[lo:hi], 4, 1, axis=0)
+        # The padding gives the filter context; only this block's own samples count. Including the padded margins
+        # measured the filter's ringing where the chunk cuts the waveform (+1.1 dB on steady tones > 5.5 s).
+        core = up[(start - lo) * 4 : (min(n, start + block) - lo) * 4]
+        peak = max(peak, float(np.max(np.abs(core))))
     return peak
 
 

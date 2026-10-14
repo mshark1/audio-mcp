@@ -103,3 +103,22 @@ def test_momentary_max_against_pyloudnorm_block_loudness():
     x[block] = 0.2 * rng.standard_normal(int(0.4 * sr))
     ref = pyloudnorm.Meter(sr, filter_class="DeMan", block_size=0.4).integrated_loudness(x[block])
     assert loudness.momentary_max(x, sr) == pytest.approx(ref, abs=0.05)
+
+
+@pytest.mark.parametrize("seconds", [3, 6, 12])
+def test_true_peak_correct_across_block_boundaries(seconds):
+    """Found by the perception benchmark: steady tones longer than one 2^18-sample block read +1.08 dB high because
+    the maximum included the filter ringing in each block's padded margins."""
+    from scipy import signal as sps
+
+    from audio_mcp.dsp import amp_db, true_peak
+
+    sr = 48000
+    x = (0.1 * np.sin(2 * np.pi * 997 * np.arange(seconds * sr) / sr)).astype(np.float32)[:, None]
+    assert float(amp_db(true_peak(x, sr))) == pytest.approx(-20.0, abs=0.02)
+    # and against a whole-signal oversampling reference on a real transient
+    rng = np.random.default_rng(5)
+    y = (0.3 * rng.standard_normal(seconds * sr)).astype(np.float32)
+    y[min(1 << 18, len(y) - 10)] = 0.99  # on the first block boundary when the signal is long enough
+    ref = float(np.max(np.abs(sps.resample_poly(y, 4, 1))))
+    assert true_peak(y[:, None], sr) == pytest.approx(ref, rel=1e-3)
