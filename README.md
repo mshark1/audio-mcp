@@ -44,8 +44,31 @@ Real output (JSON abbreviated) from the bundled demo, `scripts/demo.py`:
 | `audio_batch_process` | Applies one edit chain to many files and writes them to an output folder |
 | `audio_synthesize` | Declarative synth: band-limited oscillators with phase control, noise colours (pink/brown loop seamlessly), sweeps, ADSR, vibrato, tremolo, filters, pan, note sequences, plus exact test signals (impulse, DC, silence) |
 | `audio_info` | Metadata for a file, or a listing of the audio files in a folder |
+| `audio_check_delivery` | **Pass/fail against a delivery spec** (Apple Podcasts, Spotify, YouTube, EBU R 128, ATSC A/85, ACX audiobooks, game SFX) with cited sources and a fix that has already been tried on your file |
+| `audio_check_game_project` | **Audits a Godot 4 project's audio**: loudness consistency per category, loop settings and clicky seams, defects, and broken or unused `res://` references |
 
-Reads WAV, FLAC, OGG/Vorbis, Opus, MP3, AIFF and CAF (via libsndfile). Convert M4A/AAC with ffmpeg first.
+Reads WAV, FLAC, OGG/Vorbis, Opus, MP3, AIFF and CAF natively (via libsndfile). With [FFmpeg](https://ffmpeg.org)
+installed it also reads M4A/AAC (phones, Zoom, voice memos), WMA and the audio of video files (MP4, MOV, WebM, MKV):
+`winget install Gyan.FFmpeg` on Windows, `brew install ffmpeg` on macOS, `sudo apt install ffmpeg` on Debian/Ubuntu,
+or set `AUDIO_MCP_FFMPEG` to the binary. Each file is decoded once per session. Edited files are written as
+WAV/FLAC/OGG/AIFF/MP3.
+
+### Delivery checks
+
+`audio_check_delivery` tells you whether a file meets a platform's spec and how to fix it if it doesn't. Every
+criterion shows what's required, what was measured and whether it passes. The suggested fix is an ordered
+`audio_process` chain (noise handling before gain, true-peak limiting last) that has already been simulated on
+your file, and the tool says plainly when something can't be fixed automatically, or when heavy background noise
+needs a person's judgment. Spec numbers cite their official sources and the date they were checked.
+
+### Game projects (Godot 4)
+
+`audio_check_game_project(project_dir)` audits every .wav/.ogg/.mp3 in a Godot 4 project. It infers categories
+(UI, SFX, voice, music, ambience) from folder and file names, or takes your own mapping. It reads the `.import`
+settings to find music that won't loop, sound effects that loop forever, and loop seams that click. It compares
+loudness within each category (short sounds by their loudest moment, music by integrated LUFS) and reports
+outliers with fixes you can run directly. It also scans scenes and scripts for broken, wrongly cased or unused
+`res://` audio references. It never modifies the project.
 
 ## Install
 
@@ -113,7 +136,7 @@ correctness rather than just "no crash":
 - **Never destructive by default.** Edits write `<name>_processed.wav`; overwriting needs `overwrite=true`, and
   batch output can't target the input folder.
 - **Errors say what to do next.** An unknown op lists every op with its parameters; an undecodable file names the
-  supported formats and the ffmpeg command to convert it. Unexpected errors are reported as bugs instead of being
+  supported formats and how to install FFmpeg for the others. Unexpected errors are reported as bugs instead of being
   hidden.
 - **Honest about uncertainty.** Chords set `polyphony_likely` instead of reporting a confident wrong pitch, weak
   tempos carry a low-confidence note, Whisper's uncertain words are listed, and LUFS is `null` for clips under

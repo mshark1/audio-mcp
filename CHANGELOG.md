@@ -8,6 +8,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.3.0] - unreleased
+
+Three capabilities chosen from research into real audio needs (podcast delivery, indie game audio, AI audio
+perception), built in parallel and checked against real recordings before release.
+
+### Added
+- **`audio_check_delivery(path, spec)`**: checks a file against `apple_podcasts`, `spotify`, `youtube`,
+  `ebu_r128`, `atsc_a85`, `acx_audiobook` or `game_sfx` (`spec="list"` describes them). Returns a pass / pass with
+  warnings / fail verdict, a per-criterion table (required, measured, status, note), the cited sources with access
+  dates, and an ordered `audio_process` fix (noise handling before gain, true-peak limiting last) that has been
+  **simulated on the file** (`fix.verified`). Problems no processing can solve are listed in `fix.cannot_fix`.
+  Where a platform doesn't publish how it measures (ACX), the notes say what we approximate.
+- **`audio_check_game_project(project_dir)`**: audits a Godot 4 project's audio. It inventories files by
+  category, reads `.import` settings (loop mode, trim, normalize, force mono), finds music that doesn't loop, SFX
+  that do, and clicky loop seams, checks loudness consistency per category with ready-to-run fixes, flags
+  clipping, leading silence, clicks, DC offset, mixed sample rates and stereo SFX, and checks `res://`
+  references in scenes and scripts (broken paths, wrong letter case, unreferenced files). Read-only.
+- **M4A/AAC, WMA and video files** (MP4, MOV, WebM, MKV, AVI, ...) are read automatically by every tool when
+  FFmpeg is installed (or `AUDIO_MCP_FFMPEG` points to it): decoded once to a temporary WAV and cached for the
+  session. FFmpeg runs without a shell, with file-only protocol and demuxer whitelists, after the sandbox check.
+  `audio_info` reports the codec (via ffprobe when available) and `decoded_via: "ffmpeg"`. New environment
+  variables: `AUDIO_MCP_FFMPEG`, `AUDIO_MCP_FFPROBE`, `AUDIO_MCP_FFMPEG_TIMEOUT` (default 300 s),
+  `AUDIO_MCP_FFMPEG_CACHE_MB` (default 2048).
+
+### Fixed
+- **True peak read about 1.1 dB high on audio longer than about 5.5 s** (block-boundary filter ringing was
+  included in the maximum). Affected `true_peak_dbtp`, the true-peak warning, `normalize_peak(true_peak=true)` and
+  `normalize_lufs` ceilings. Found by the perception benchmark in audio-mcp-assets.
+
+### Changed
+- Without FFmpeg, opening these formats fails with an error naming the format and per-OS install commands. Folder
+  listings report them under `needs_ffmpeg`. Batch tools include them only when FFmpeg is available.
+
 ## [0.2.0] - 2026-10-13
 
 Improvements found by using audio-mcp for real work: an AI agent built a public-domain reference-signal pack with
