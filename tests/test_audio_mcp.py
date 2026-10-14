@@ -340,6 +340,7 @@ def test_mcp_tools_registered():
         "audio_compare",
         "audio_process",
         "audio_synthesize",
+        "audio_check_delivery",
     }
     assert all(t.description for t in tools)
 

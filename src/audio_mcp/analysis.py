@@ -206,6 +206,32 @@ def level_stats(audio: Audio) -> dict:
     return out
 
 
+def hop_power(x: np.ndarray, hop: int) -> np.ndarray:
+    """Mean-square power of each consecutive `hop`-sample block, all channels together (x is frames x channels).
+    Chunked, so only one chunk is ever copied to float64. A trailing partial block is dropped."""
+    hop = max(1, int(hop))
+    n = (len(x) // hop) * hop
+    step = max(1, CHUNK // hop) * hop
+    out = [
+        np.square(x[a : min(n, a + step)], dtype=np.float64).reshape(-1, hop, x.shape[1]).mean(axis=(1, 2))
+        for a in range(0, n, step)
+    ]
+    return np.concatenate(out) if out else np.zeros(0)
+
+
+def windowed_rms_db(x: np.ndarray, sr: int, window_s: float = 0.5, hop_s: float = 0.05) -> np.ndarray:
+    """Unweighted RMS level in dBFS (all channels together) of every `window_s` window, stepping by `hop_s`.
+    Audio shorter than one window gives a single value for the whole signal."""
+    hop = max(1, int(round(hop_s * sr)))
+    k = max(1, int(round(window_s / hop_s)))
+    p = hop_power(x, hop)
+    if len(p) < k:
+        whole = float(np.mean(np.square(x, dtype=np.float64))) if len(x) else 0.0
+        return np.atleast_1d(pow_db(whole))
+    cs = np.concatenate(([0.0], np.cumsum(p)))
+    return pow_db(np.maximum(cs[k:] - cs[:-k], 0.0) / k)
+
+
 def loudness_shape(mono, sr: int, segments: int = 40) -> dict:
     n = min(segments, max(1, len(mono) // max(1, int(0.01 * sr))))
     edges = np.linspace(0, len(mono), n + 1).astype(int)

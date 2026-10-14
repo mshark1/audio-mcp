@@ -78,6 +78,12 @@ async def main(scratch: Path, command: list[str]):
             ),
         )
         expect_ok("compare", await session.call_tool("audio_compare", {"path_a": zap, "path_b": zap_hp}))
+        expect_ok("check_delivery", await session.call_tool("audio_check_delivery", {"path": zap, "spec": "game_sfx"}))
+        expect_clean_error(
+            "unknown spec",
+            await session.call_tool("audio_check_delivery", {"path": zap, "spec": "netflix"}),
+            "Unknown delivery spec",
+        )
         expect_clean_error(
             "bad op",
             await session.call_tool("audio_process", {"path": zap, "operations": [{"op": "louder"}]}),
