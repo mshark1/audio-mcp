@@ -325,3 +325,24 @@ def test_section_check_reports_range(tmp_path):
     path = write(tmp_path / "two.wav", np.concatenate([blip(), np.zeros(SR), blip()]))
     rep = check(path, "game_sfx", start=1.3)
     assert rep["range_s"][0] == pytest.approx(1.3)
+
+
+def test_heavy_hum_is_flagged_not_silently_amplified(tmp_path):
+    """Found reviewing the merge: on a voice recording with loud 60 Hz hum and hiss, the pauses sat only ~12 dB below
+    the speech, so the noise advisory (meant to skip continuous music) stayed silent and the fix just raised the
+    hum by 16 dB. Low contrast must still warn, and the fix must include the speech-safe high-pass but no denoise."""
+    sr = 44100
+    t_ = np.arange(6 * sr) / sr
+    rng = np.random.default_rng(3)
+    speechy = 0.25 * np.sin(2 * np.pi * 220 * t_) * (np.sin(2 * np.pi * 0.5 * t_) > 0)  # bursts with pauses
+    hum = (
+        0.08 * np.sin(2 * np.pi * 60 * t_) + 0.03 * np.sin(2 * np.pi * 180 * t_) + 0.004 * rng.standard_normal(len(t_))
+    )
+    path = tmp_path / "hummy.wav"
+    sf.write(str(path), np.stack([0.25 * (speechy + hum)] * 2, axis=1).astype(np.float32), sr)
+    rep = server.audio_check_delivery(str(path), "apple_podcasts")
+    noise = next(c for c in rep["checks"] if c["check"] == "background_noise")
+    assert noise["status"] == "warn" and "hum" in noise["note"]
+    ops = [o["op"] for o in rep["fix"]["operations"]]
+    assert "highpass" in ops and "denoise" not in ops
+    assert ops.index("highpass") < ops.index("normalize_lufs")

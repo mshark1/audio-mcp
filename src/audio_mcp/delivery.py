@@ -408,7 +408,8 @@ def _loudness_checks(m, spec, rt=None) -> list[dict]:
         )
     if spec.get("speech") and m["noise_measurable"] and not m["silent"] and m["lufs"] is not None:
         after = m["noise"] + (spec["target"] - m["lufs"])
-        if after > -50 and m["loud"] - m["noise"] > 15:
+        contrast = m["loud"] - m["noise"]
+        if after > -50 and contrast > 15:
             out.append(
                 _check(
                     "background_noise",
@@ -417,6 +418,24 @@ def _loudness_checks(m, spec, rt=None) -> list[dict]:
                     "warn",
                     "Raising the loudness raises the noise in the pauses too; the fix reduces it first. If the file "
                     "has no pauses (continuous music), this is the quietest passage, not noise: ignore it.",
+                )
+            )
+        elif after > -50:
+            # Low contrast: the quietest passage is within 15 dB of the loud parts. That is either continuous
+            # material or HEAVY noise/hum (pauses filled with it); found on a hum-and-hiss voice recording, where
+            # the old check stayed silent exactly in the worst case. Denoise at this SNR risks the speech, so the
+            # fix only adds a speech-safe high-pass and the note points to targeted tools.
+            m["low_contrast"] = True
+            out.append(
+                _check(
+                    "background_noise",
+                    "advisory: quiet parts below -50 dBFS after normalization",
+                    f"{r(after, 1)} dBFS (quietest passage only {r(contrast, 1)} dB below the loud parts)",
+                    "warn",
+                    "Either continuous material (music, ambience: ignore this) or heavy background noise or hum that "
+                    "fills the pauses and will be raised with the loudness. For speech: the fix adds a speech-safe "
+                    "80 Hz high-pass; run audio_analyze for mains-hum notches, and denoise only if audio_transcribe "
+                    "confirms the words survive.",
                 )
             )
     return out
@@ -689,7 +708,14 @@ def _plan_loudness(m, spec, checks, adjust):
     if rate:
         ops.append({"op": "resample", "rate": rate})
         why.append(f"resample to {rate} Hz before any level change, so peaks are measured at the final rate.")
-    if _status(checks, "background_noise") == "warn":
+    if _status(checks, "background_noise") == "warn" and m.get("low_contrast"):
+        ops.append({"op": "highpass", "hz": 80})
+        why.append(
+            "highpass 80 Hz before raising loudness: removes rumble and the fundamental of mains hum without "
+            "touching speech. The noise is too close to the speech level for automatic denoise; see the "
+            "background_noise note."
+        )
+    elif _status(checks, "background_noise") == "warn":
         after = m["noise"] + (spec["target"] - m["lufs"])
         red = float(min(MAX_SPEECH_SAFE_DENOISE_DB, max(6, math.ceil(after + 53 + adjust.get("noise", 0)))))
         ops += [{"op": "highpass", "hz": 80}, {"op": "denoise", "reduction_db": red}]
