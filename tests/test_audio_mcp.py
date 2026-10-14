@@ -524,3 +524,16 @@ def test_coloured_noise_has_no_sub_audio_energy(wave):
     f = np.fft.rfftfreq(len(x), 1 / sr)
     assert spec[f < 15].sum() / spec.sum() < 0.01
     assert abs(float(x.mean())) < 0.01
+
+
+def test_long_ogg_save_does_not_crash(tmp_path):
+    """One sf.write of ~1 minute of Vorbis overflows the Windows stack and kills the process (seen in CI). save()
+    writes in blocks; 90 s of stereo must round-trip."""
+    from audio_mcp import audio_io
+
+    sr = 44100
+    x = (0.1 * np.sin(2 * np.pi * 220 * np.arange(90 * sr) / sr)).astype(np.float32)
+    out, _ = audio_io.save(np.stack([x, x], axis=1), sr, tmp_path / "long.ogg")
+    y, sr2 = sf.read(str(out))
+    assert sr2 == sr and y.shape == (90 * sr, 2)
+    assert abs(float(np.abs(y).max()) - 0.1) < 0.01

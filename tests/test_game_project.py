@@ -7,7 +7,7 @@ import pytest
 import soundfile as sf
 
 from audio_mcp import godot, loudness, server
-from audio_mcp.audio_io import AudioError
+from audio_mcp.audio_io import AudioError, write_chunked
 
 SR = 44100
 
@@ -73,7 +73,7 @@ def tone(seconds, hz=440.0, db=-20.0, fade=0.005, lead=0.0):
 def put(root, rel, x, loop=None, uid=None, fmt="wav"):
     p = root / rel
     p.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(p), x, SR, subtype="VORBIS" if fmt == "ogg" else "PCM_16")
+    write_chunked(p, x, SR, "VORBIS" if fmt == "ogg" else "PCM_16")  # sf.write of long OGG crashes on Windows
     if loop is not None:
         name = p.name
         uid = uid or f"b{abs(hash(rel)) % 10**12:012d}"

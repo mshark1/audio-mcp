@@ -75,4 +75,6 @@ scripts/
   an OS policy, not a code bug, and shouldn't be worked around.
 - FFmpeg runs as an argument list (never a shell) with the input as `file:<path>`, `-protocol_whitelist file`
   and a demuxer whitelist, so a crafted file name or playlist can't reach the network or other files. Keep it so.
+- libsndfile's Vorbis encoder overflows the Windows stack (a hard crash, not an exception) when handed about a
+  minute of audio in one `sf.write`. Write through `audio_io.write_chunked`, in tests too.
 - Windows PowerShell 5.1 writes UTF-8 *with BOM* when redirecting output, which breaks TOML and JSON parsers.

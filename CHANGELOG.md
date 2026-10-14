@@ -33,6 +33,9 @@ perception), built in parallel and checked against real recordings before releas
   `AUDIO_MCP_FFMPEG_CACHE_MB` (default 2048).
 
 ### Fixed
+- **Saving about a minute or more of audio as OGG could crash the server on Windows** (a stack overflow inside
+  libsndfile's Vorbis encoder when given the whole signal in one call; also in 0.2.0). Files are now written in
+  blocks. Found by CI on the Godot tests.
 - **True peak read about 1.1 dB high on audio longer than about 5.5 s** (block-boundary filter ringing was
   included in the maximum). Affected `true_peak_dbtp`, the true-peak warning, `normalize_peak(true_peak=true)` and
   `normalize_lufs` ceilings. Found by the perception benchmark in audio-mcp-assets.

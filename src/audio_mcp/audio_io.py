@@ -454,6 +454,15 @@ def default_output(source: Path, tag: str) -> Path:
     return candidate
 
 
+def write_chunked(path, samples: np.ndarray, sr: int, subtype: str, frames: int = 65536) -> None:
+    """Write in blocks. libsndfile's Vorbis encoder overflows the 1 MB Windows stack when handed about a minute of
+    audio in one call (a hard process crash, not an exception); blocks of 65536 frames are safe at any length."""
+    channels = 1 if samples.ndim == 1 else samples.shape[1]
+    with sf.SoundFile(str(path), "w", sr, channels, subtype=subtype) as f:
+        for i in range(0, len(samples), frames):
+            f.write(samples[i : i + frames])
+
+
 def save(
     samples: np.ndarray, sr: int, path, overwrite: bool = False, subtype: str | None = None
 ) -> tuple[Path, list[str]]:
@@ -475,7 +484,7 @@ def save(
         samples = np.clip(samples, -1.0, 1.0)
     p.parent.mkdir(parents=True, exist_ok=True)
     try:
-        sf.write(str(p), samples, sr, subtype=subtype)
+        write_chunked(p, samples, sr, subtype)
     except Exception as e:
         raise AudioError(f"Could not write {p.name} as {subtype}: {e}") from None
     return p, warnings
