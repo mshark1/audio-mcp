@@ -179,3 +179,26 @@ def test_allowed_dirs_sandbox(tmp_path, monkeypatch):
         with pytest.raises(AudioError, match="not allowed"):
             call()
     assert not (outside / "y.wav").exists() and not (outside / "v.png").exists()
+
+
+@pytest.mark.parametrize(
+    "spec,kind,n",
+    list(
+        itertools.product(
+            ["apple_podcasts", "spotify", "youtube", "ebu_r128", "atsc_a85", "acx_audiobook", "game_sfx"],
+            ["silence", "dc", "square", "sine"],
+            [1, 64, int(0.3 * SR), SR],
+        )
+    ),
+)
+def test_check_delivery_odd_inputs(tmp_path, spec, kind, n):
+    path = tmp_path / "x.wav"
+    sf.write(str(path), signal_for(kind, n, 2).astype(np.float32), SR, subtype="PCM_24")
+
+    def run():
+        rep = server.audio_check_delivery(str(path), spec)
+        assert rep["verdict"] in ("pass", "pass with warnings", "fail")
+        if kind == "silence":
+            assert rep["verdict"] == "fail"
+
+    check(run)

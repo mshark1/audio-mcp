@@ -8,7 +8,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import analysis, audio_io, batch, events, pitch, synth
+from . import analysis, audio_io, batch, delivery, events, pitch, synth
 from . import compare as compare_mod
 from . import process as process_mod
 from . import render as render_mod
@@ -227,6 +227,21 @@ def audio_synthesize(spec: dict, output: str, overwrite: bool = False) -> dict:
     x, sr = synth.synthesize(spec)
     written, warnings = audio_io.save(x, sr, output, overwrite=overwrite)
     return {"output": str(written), **analysis.quick_levels(x, sr), "warnings": warnings}
+
+
+@tool(annotations=READ_ONLY)
+def audio_check_delivery(path: str, spec: str, start: float | None = None, end: float | None = None) -> dict:
+    """Check a file against a delivery spec and get a verdict (pass / pass with warnings / fail), one entry per
+    criterion (required, measured, status, note), and `fix`: an ordered audio_process operations list that was
+    simulated on this file (`fix.verified`), plus `cannot_fix` for problems no processing can solve (clipping,
+    a noise floor too high to remove without damaging speech, wrong length).
+    Specs: apple_podcasts, spotify, youtube, ebu_r128, atsc_a85, acx_audiobook, game_sfx
+    (spec="list" describes them). Each result cites its sources and the date they were checked.
+    After a fix that includes denoise, verify the words with audio_transcribe."""
+    if str(spec).strip().lower() == "list":
+        return delivery.spec_list()
+    delivery.get_spec(spec)  # an unknown spec fails before the file is read
+    return delivery.check_delivery(audio_io.load(path, start, end), spec)
 
 
 def main():
