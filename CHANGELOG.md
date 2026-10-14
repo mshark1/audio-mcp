@@ -19,6 +19,10 @@ these tools only, and logged every failure. See https://github.com/mshark1/audio
 - Oscillator `phase` (degrees). Oscillators now start exactly at that phase on the first sample (previously one
   sample in), which matters for test signals.
 - `audio_process` ops `polarity` (invert all channels or one) and `normalize_rms`.
+- `levels.lufs_momentary_max` in `audio_analyze` (and in process/synthesize level summaries): EBU momentary
+  loudness, the loudest 400 ms window, defined for clips of any length. Integrated LUFS stays `null` under 0.4 s.
+- `normalize_lufs(measure="momentary_max")` to match the loudness of short sound effects.
+- `normalize_peak(true_peak=true)` to normalize to a true-peak (dBTP) target.
 
 ### Fixed
 - Pitch was biased sharp at higher frequencies (+3.3 cents at 997 Hz, +10 cents at 1760 Hz). It's now within
@@ -26,11 +30,20 @@ these tools only, and logged every failure. See https://github.com/mshark1/audio
 - Onsets in the last frame of a file were missed, and `audio_events` couldn't see a sound in the final few
   milliseconds.
 - `audio_events` ignored sounds shorter than 30 ms (clicks, ticks). Events can now be as short as 10 ms.
+- Synthesized pink and brown noise had energy down to 0 Hz (DC drift, "rumble" warnings); it now has nothing
+  below 20 Hz and still loops seamlessly.
+- The mains-hum warning fired for a single note on a mains harmonic (e.g. 250 Hz); it now needs the 50/60 Hz
+  fundamental or its 2nd harmonic.
 
 ### Changed (output an agent may rely on)
 - `spectrum.flatness` / `spectrum.character` and event `character` now use per-octave flatness. Pink and brown
   noise (and other sloped noise) report `noise-like` / `noisy` instead of `mixed` / `tonal`, and speech now
   reports `mixed tonal/noise` instead of `tonal`. Numeric flatness values differ from 0.1.x.
+- `normalize_lufs`'s `ceiling_db` is now always a true-peak ceiling. Without `limit` it used to cap the sample
+  peak, so true peaks could exceed it.
+- `audio_batch_survey` compares sets of short one-shots by `lufs_momentary_max` (was RMS), and suggests
+  `normalize_lufs` with `measure="momentary_max"` and no limiter (was a generic `normalize_peak`). Per-file rows
+  include `lufs_momentary_max`.
 - `stereo.width` is `phase problem (negative correlation)` only below -0.3 correlation (was: any negative
   value). Near-zero correlation now reports `wide`, and the out-of-phase issue no longer fires for wide stereo
   material. The issue message now includes the mono-sum level change.

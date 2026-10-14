@@ -479,3 +479,46 @@ def test_polarity_and_normalize_rms(tmp_path):
     assert rep["levels"]["rms_dbfs"] == pytest.approx(-20.0, abs=0.01)
     with pytest.raises(AudioError, match="channel must be between 0 and 1"):
         server.audio_process(str(out), [{"op": "polarity", "channel": 2}])
+
+
+def test_short_sounds_normalize_by_momentary_loudness(tmp_path):
+    """Integrated LUFS is undefined under 0.4 s; momentary max lets short effects be matched to each other."""
+    blip = write(tmp_path / "blip.wav", sine(1000, 0.1, 0.9))
+    with pytest.raises(AudioError, match="momentary_max"):
+        server.audio_process(blip, [{"op": "normalize_lufs", "lufs": -20}], output=str(tmp_path / "x.wav"))
+    res = server.audio_process(blip, [{"op": "normalize_lufs", "lufs": -20, "measure": "momentary_max"}])
+    assert server.audio_analyze(res["output"], rhythm=False)["levels"]["lufs_momentary_max"] == pytest.approx(
+        -20, abs=0.1
+    )
+
+
+def test_normalize_to_true_peak(tmp_path):
+    out = tmp_path / "isp.wav"
+    spec = {
+        "sample_rate": 48000,
+        "layers": [
+            {"wave": "sine", "freq": 12000, "phase": 45, "duration": 1, "envelope": {"attack": 0.01, "release": 0.01}}
+        ],
+    }
+    server.audio_synthesize(spec, str(out))
+    res = server.audio_process(str(out), [{"op": "normalize_peak", "db": -1, "true_peak": True}])
+    lv = server.audio_analyze(res["output"], pitch=False, rhythm=False)["levels"]
+    assert lv["true_peak_dbtp"] == pytest.approx(-1.0, abs=0.05)
+    assert lv["peak_dbfs"] < -3.5  # sample peak sits ~3 dB lower for this signal
+
+
+def test_single_tonal_peak_on_a_mains_harmonic_is_not_hum(tmp_path):
+    """A note at 250 Hz (5 x 50) in non-tonal material used to be reported as 50 Hz hum."""
+    rng = np.random.default_rng(11)
+    x = sine(250, 2.0, 0.3) + 0.05 * rng.standard_normal(2 * SR)
+    rep = server.audio_analyze(write(tmp_path / "note.wav", x), rhythm=False)
+    assert "hum" not in issue_text(rep)
+
+
+@pytest.mark.parametrize("wave", ["pink", "brown"])
+def test_coloured_noise_has_no_sub_audio_energy(wave):
+    x, sr = synthesize({"sample_rate": 48000, "seed": 3, "layers": [{"wave": wave, "duration": 0.2}]})
+    spec = np.abs(np.fft.rfft(x[:, 0])) ** 2
+    f = np.fft.rfftfreq(len(x), 1 / sr)
+    assert spec[f < 15].sum() / spec.sum() < 0.01
+    assert abs(float(x.mean())) < 0.01

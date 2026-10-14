@@ -119,7 +119,9 @@ def mains_hum(peaks: list[dict], noise_floor_dbfs, character) -> tuple[int, list
     more harmonics, a raised noise floor, or non-tonal material where a steady low tone is unexpected)."""
     for base in (60, 50):
         found = [p["hz"] for p in peaks if any(abs(p["hz"] - k * base) < 1.5 for k in range(1, 7))]
-        if not found:
+        # Real hum always shows the mains fundamental or its 2nd harmonic; one peak that merely lands on
+        # e.g. 250 Hz (5 x 50) is just a note.
+        if not any(abs(h - k * base) < 1.5 for h in found for k in (1, 2)):
             continue
         noisy_floor = noise_floor_dbfs is not None and noise_floor_dbfs > -55
         if len(found) >= 2 or noisy_floor or character != "tonal":
@@ -188,6 +190,7 @@ def level_stats(audio: Audio) -> dict:
         "true_peak_dbtp": r(amp_db(true_peak(x, sr)), 2),
         "rms_dbfs": r(rms_db, 2),
         "lufs_integrated": r(lufs, 2),
+        "lufs_momentary_max": r(loudness.momentary_max(x, sr), 2),
         "crest_factor_db": r(float(amp_db(peak)) - rms_db, 2),
         "dc_offset": r(float(np.max(np.abs(colsum / n))), 4),
         "clipped_samples": int(clipped_idx.size),
@@ -197,7 +200,9 @@ def level_stats(audio: Audio) -> dict:
     if events:
         out["first_clips_s"] = [r(g[0] / sr + audio.offset, 3) for g in events[:5]]
     if lufs is None:
-        out["lufs_note"] = "Integrated LUFS needs at least 0.4 s of audio; use rms_dbfs for short clips."
+        out["lufs_note"] = (
+            "Integrated LUFS needs at least 0.4 s of audio; for short clips compare lufs_momentary_max instead."
+        )
     return out
 
 
@@ -511,6 +516,7 @@ def quick_levels(samples: np.ndarray, sr: int) -> dict:
         "channels": samples.shape[1],
         "peak_dbfs": r(amp_db(peak), 2),
         "lufs_integrated": r(loudness.integrated_loudness(samples, sr), 2),
+        "lufs_momentary_max": r(loudness.momentary_max(samples, sr), 2),
     }
 
 

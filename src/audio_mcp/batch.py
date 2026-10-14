@@ -57,6 +57,7 @@ def survey(target: str | list[str], pattern: str = "*") -> dict:
                 "channels": rep["channels"],
                 "format": rep["format"],
                 "lufs": lv["lufs_integrated"],
+                "lufs_momentary_max": lv["lufs_momentary_max"],
                 "rms_dbfs": lv["rms_dbfs"],
                 "true_peak_dbtp": lv["true_peak_dbtp"],
                 "leading_silence_s": si.get("leading_s"),
@@ -69,24 +70,25 @@ def survey(target: str | list[str], pattern: str = "*") -> dict:
         raise AudioError("No file could be analyzed: " + "; ".join(errors[:5]))
 
     findings, suggestions = [], []
-    # Loudness: use LUFS where defined, otherwise RMS (short one-shots).
+    # Loudness: integrated LUFS where defined; for sets of short one-shots, momentary max loudness (any length).
     use_lufs = sum(row["lufs"] is not None for row in rows) >= 0.8 * len(rows)
-    key = "lufs" if use_lufs else "rms_dbfs"
+    key = "lufs" if use_lufs else "lufs_momentary_max"
     vals = np.array([row[key] for row in rows if row[key] is not None])
     med = float(np.median(vals))
     spread = float(np.percentile(vals, 90) - np.percentile(vals, 10)) if len(vals) > 1 else 0.0
-    unit = "LUFS" if use_lufs else "dBFS RMS"
+    unit = "LUFS" if use_lufs else "LUFS momentary max"
     loud = [(row["name"], row[key]) for row in rows if row[key] is not None and abs(row[key] - med) > 6]
     for name, v in loud:
         findings.append(
             f"{name} is {abs(v - med):.1f} dB {'louder' if v > med else 'quieter'} than the set median ({v:.1f} vs {med:.1f} {unit})."
         )
     if spread > 6 or loud:
-        op = (
-            {"op": "normalize_lufs", "lufs": round(med), "limit": True}
-            if use_lufs
-            else {"op": "normalize_peak", "db": -1}
-        )
+        if use_lufs:
+            op = {"op": "normalize_lufs", "lufs": round(med), "limit": True}
+        else:
+            # Short one-shots: match loudness but don't limit; clicks too short to reach the target should stay
+            # light (they stop at the true-peak ceiling) rather than be crushed by a limiter.
+            op = {"op": "normalize_lufs", "lufs": round(med), "measure": "momentary_max", "ceiling_db": -1}
         suggestions.append(
             {
                 "why": f"loudness spread is {spread:.1f} dB (10th-90th percentile)",

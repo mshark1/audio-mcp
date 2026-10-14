@@ -51,11 +51,15 @@ def _envelope(n, sr, env):
     )[:n]
 
 
-def _colored_noise(n, rng, exponent):
+def _colored_noise(n, rng, exponent, sr):
+    """1/f^exponent noise shaped in the frequency domain (so it loops seamlessly), with nothing below 20 Hz:
+    unbounded low-frequency energy would show up as DC drift and rumble, which real audio doesn't have."""
     spec = np.fft.rfft(rng.standard_normal(n))
-    f = np.fft.rfftfreq(n)
-    f[0] = f[1] if n > 1 else 1.0
-    y = np.fft.irfft(spec / f**exponent, n)
+    f = np.fft.rfftfreq(n, 1.0 / sr)
+    shape = np.zeros_like(f)
+    audible = f >= 20.0
+    shape[audible] = (f[audible] / 20.0) ** -exponent
+    y = np.fft.irfft(spec * shape, n)
     return y / (np.max(np.abs(y)) or 1.0)
 
 
@@ -76,9 +80,9 @@ def _oscillator(wave, freq, sr, rng, phase_deg=0.0, n=None):
     if wave == "noise":
         return np.clip(rng.standard_normal(n) / 3.0, -1, 1)
     if wave == "pink":
-        return _colored_noise(n, rng, 0.5)
+        return _colored_noise(n, rng, 0.5, sr)
     if wave == "brown":
-        return _colored_noise(n, rng, 1.0)
+        return _colored_noise(n, rng, 1.0, sr)
     # Start exactly at phase_deg on the first sample (cumulative phase of the preceding samples only).
     phase = 2 * np.pi * np.concatenate(([0.0], np.cumsum(freq[:-1]))) / sr + np.deg2rad(phase_deg)
     if wave == "sine":

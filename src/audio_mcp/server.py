@@ -189,7 +189,8 @@ def audio_process(
     """Apply operations in order and write a NEW file (default: <name>_processed.<ext> next to the input;
     the input is never modified unless output==path and overwrite=true). Each operation is an object, e.g.
     [{"op":"highpass","hz":80}, {"op":"normalize_lufs","lufs":-16}, {"op":"fade_out","seconds":0.5}].
-    Ops: gain(db) normalize_peak(db=-1) normalize_rms(db=-20) normalize_lufs(lufs=-16, ceiling_db=-1, limit=false) trim_silence(threshold_db=-60, pad_ms=10)
+    Ops: gain(db) normalize_peak(db=-1, true_peak=false) normalize_rms(db=-20)
+    normalize_lufs(lufs=-16, ceiling_db=-1, limit=false, measure=integrated|momentary_max) trim_silence(threshold_db=-60, pad_ms=10)
     denoise(reduction_db=12, sensitivity=1, noise_start, noise_end) [verify speech afterwards with audio_transcribe]
     limit(ceiling_db=-1, release_ms=60, lookahead_ms=5) compress(threshold_db=-18, ratio=3, attack_ms=10, release_ms=120, knee_db=6, makeup_db=0)
     fade_in/fade_out(seconds, curve=cosine|linear|equal_power) crop(start, end) pad(start, end)

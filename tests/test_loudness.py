@@ -73,3 +73,33 @@ def test_frame_rms_chunked_matches_direct(monkeypatch):
     frame, hop = 441, 220
     direct = np.sqrt([np.mean(x[i : i + frame] ** 2) for i in range(0, len(x) - frame + 1, hop)])
     assert np.allclose(dsp.frame_rms(x, frame, hop), direct)
+
+
+def test_momentary_max_matches_integrated_for_steady_tone():
+    """For a steady signal every 400 ms window has the same loudness, so M-max equals integrated loudness."""
+    sr = 48000
+    x = 0.3 * np.sin(2 * np.pi * 997 * np.arange(5 * sr) / sr)
+    assert loudness.momentary_max(x, sr) == pytest.approx(loudness.integrated_loudness(x, sr), abs=0.05)
+
+
+def test_momentary_max_finds_the_loud_part_and_handles_short_clips():
+    sr = 48000
+    quiet = 0.01 * np.sin(2 * np.pi * 997 * np.arange(3 * sr) / sr)
+    loud = 0.5 * np.sin(2 * np.pi * 997 * np.arange(sr) / sr)
+    x = np.concatenate([quiet, loud, quiet])
+    assert loudness.momentary_max(x, sr) == pytest.approx(loudness.integrated_loudness(loud, sr), abs=0.1)
+    # 100 ms tone: one 400 ms window with 300 ms of silence -> 10*log10(0.25) = -6.02 LU below the steady tone
+    short = loud[: sr // 10]
+    assert loudness.momentary_max(short, sr) == pytest.approx(loudness.integrated_loudness(loud, sr) - 6.02, abs=0.15)
+    assert loudness.momentary_max(np.zeros(100), sr) == float("-inf")
+
+
+def test_momentary_max_against_pyloudnorm_block_loudness():
+    """Cross-check: the loudest 400 ms window must equal pyloudnorm's loudness of exactly that single block."""
+    sr = 48000
+    rng = np.random.default_rng(4)
+    x = np.zeros(4 * sr)
+    block = slice(sr, sr + int(0.4 * sr))  # aligned to our 10 ms steps; silence before it, so filter state matches
+    x[block] = 0.2 * rng.standard_normal(int(0.4 * sr))
+    ref = pyloudnorm.Meter(sr, filter_class="DeMan", block_size=0.4).integrated_loudness(x[block])
+    assert loudness.momentary_max(x, sr) == pytest.approx(ref, abs=0.05)

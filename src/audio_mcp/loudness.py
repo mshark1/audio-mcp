@@ -75,3 +75,37 @@ def integrated_loudness(x: np.ndarray, sr: int) -> float | None:
     relative = -0.691 + 10 * np.log10(gated.mean()) + RELATIVE_GATE
     gated = power[(lk > ABSOLUTE_GATE) & (lk > relative)]
     return float(-0.691 + 10 * np.log10(gated.mean()))
+
+
+def momentary_max(x: np.ndarray, sr: int) -> float | None:
+    """Maximum momentary loudness (EBU R128 'M': K-weighted, 400 ms sliding window, here in 10 ms steps), in LUFS.
+
+    Defined for any length: a clip shorter than 400 ms is measured as one window padded with silence, as a meter
+    would see it. Useful for short sound effects, where integrated loudness (which needs >= 400 ms and gating) is
+    undefined. Returns None for empty input and -inf for silence."""
+    x = np.asarray(x)
+    if x.ndim == 1:
+        x = x[:, None]
+    if len(x) == 0:
+        return None
+    step = max(1, int(round(0.01 * sr)))
+    window_steps = 40
+    min_len = window_steps * step
+    if len(x) < min_len:
+        x = np.concatenate([x, np.zeros((min_len - len(x), x.shape[1]), dtype=x.dtype)])
+    sos = k_weighting_sos(sr)
+    zi = np.zeros((sos.shape[0], 2, x.shape[1]))
+    chunk = (CHUNK // step) * step
+    weights = channel_weights(x.shape[1])
+    energy, carry = [], np.zeros((0, x.shape[1]))
+    for a in range(0, len(x), chunk):
+        y, zi = signal.sosfilt(sos, x[a : a + chunk].astype(np.float64), axis=0, zi=zi)
+        y = np.concatenate([carry, y])
+        whole = (len(y) // step) * step
+        energy.append((np.square(y[:whole]).reshape(-1, step, x.shape[1]).sum(axis=1)) @ weights)
+        carry = y[whole:]
+    e = np.concatenate(energy)
+    cs = np.concatenate(([0.0], np.cumsum(e)))
+    windows = (cs[window_steps:] - cs[:-window_steps]) / (window_steps * step)
+    peak = float(windows.max()) if len(windows) else 0.0
+    return -0.691 + 10 * math.log10(peak) if peak > 0 else float("-inf")

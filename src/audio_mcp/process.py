@@ -10,6 +10,7 @@ from scipy import signal
 from . import dynamics, loudness, restore
 from .audio_io import Audio, AudioError, load
 from .dsp import amp_db, frame_rms, resample
+from .dsp import true_peak as dsp_true_peak
 
 OPS: dict[str, callable] = {}
 
@@ -40,10 +41,20 @@ def _check_hz(sr, hz):
         raise AudioError(f"Frequency {hz} Hz must be between 0 and Nyquist ({sr / 2:g} Hz).")
 
 
-def _lufs(x, sr):
+LOUDNESS_MEASURES = ("integrated", "momentary_max")
+
+
+def _lufs(x, sr, measure="integrated"):
+    if measure not in LOUDNESS_MEASURES:
+        raise AudioError(f"measure must be one of {LOUDNESS_MEASURES}.")
+    if measure == "momentary_max":
+        return loudness.momentary_max(x, sr)
     value = loudness.integrated_loudness(x, sr)
     if value is None:
-        raise AudioError("LUFS needs at least 0.4 s of audio; use normalize_peak for short clips.")
+        raise AudioError(
+            "Integrated LUFS needs at least 0.4 s of audio. For short sounds use measure='momentary_max' "
+            "(loudest 400 ms window, defined for any length)."
+        )
     return value
 
 
@@ -54,13 +65,15 @@ def _gain(x, sr, db):
 
 
 @op
-def _normalize_peak(x, sr, db=-1.0):
-    """Scale so the sample peak sits at `db` dBFS."""
-    peak = float(np.max(np.abs(x)))
+def _normalize_peak(x, sr, db=-1.0, true_peak=False):
+    """Scale so the peak sits at `db`: sample peak in dBFS, or with true_peak=true the inter-sample (true) peak in
+    dBTP, which is what -1 dBTP delivery specs mean."""
+    peak = dsp_true_peak(x, sr) if true_peak else float(np.max(np.abs(x)))
     if peak == 0:
         raise AudioError("Can't normalize silence.")
     g = db - float(amp_db(peak))
-    return x * 10 ** (g / 20), sr, f"normalize_peak to {db:g} dBFS ({g:+.2f} dB)"
+    unit = "dBTP (true peak)" if true_peak else "dBFS"
+    return x * 10 ** (g / 20), sr, f"normalize_peak to {db:g} {unit} ({g:+.2f} dB)"
 
 
 @op
@@ -74,14 +87,15 @@ def _normalize_rms(x, sr, db=-20.0):
 
 
 @op
-def _normalize_lufs(x, sr, lufs=-16.0, ceiling_db=-1.0, limit=False):
-    """Scale to an integrated loudness target. Peaks never exceed `ceiling_db`: by default the gain is capped;
-    with limit=true a true-peak limiter holds the peaks down so the loudness target is reached."""
-    current = _lufs(x, sr)
+def _normalize_lufs(x, sr, lufs=-16.0, ceiling_db=-1.0, limit=False, measure="integrated"):
+    """Scale to a loudness target. measure='integrated' (programme loudness, needs >= 0.4 s) or 'momentary_max'
+    (loudest 400 ms window; use it to match short sound effects to each other). True peaks never exceed `ceiling_db`:
+    by default the gain is capped; with limit=true a true-peak limiter holds peaks down so the target is reached."""
+    current = _lufs(x, sr, measure)
     if not np.isfinite(current):
         raise AudioError("Loudness is undefined (audio is silent).")
     g = lufs - current
-    peak_db = float(amp_db(np.max(np.abs(x))))
+    peak_db = float(amp_db(dsp_true_peak(x, sr)))  # true peak, the same ceiling the limiter enforces
     if peak_db + g <= ceiling_db:
         return x * 10 ** (g / 20), sr, f"normalize_lufs {current:.1f} -> {lufs:g} LUFS ({g:+.2f} dB)"
     if not limit:
@@ -90,13 +104,13 @@ def _normalize_lufs(x, sr, lufs=-16.0, ceiling_db=-1.0, limit=False):
             x * 10 ** (g / 20),
             sr,
             (
-                f"normalize_lufs: target {lufs:g} LUFS would push the peak above {ceiling_db:g} dBFS; "
+                f"normalize_lufs: target {lufs:g} LUFS would push the true peak above {ceiling_db:g} dBTP; "
                 f"gain capped at {g:+.2f} dB (about {current + g:.1f} LUFS). Pass limit=true to reach the target with a limiter."
             ),
         )
     for _ in range(4):  # limiting lowers loudness a little, so converge on the target
         y, stats = dynamics.limit(x * 10 ** (g / 20), sr, ceiling_db)
-        reached = _lufs(y, sr)
+        reached = _lufs(y, sr, measure)
         if abs(reached - lufs) < 0.1:
             break
         g += lufs - reached
