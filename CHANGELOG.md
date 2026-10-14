@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-10-13
 
 Improvements found by using audio-mcp for real work: an AI agent built a public-domain reference-signal pack with
 these tools only, and logged every failure. See https://github.com/mshark1/audio-mcp-assets (FRICTION.md).
