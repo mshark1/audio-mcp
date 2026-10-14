@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from .analysis import analyze, quick_levels
-from .audio_io import AUDIO_EXTENSIONS, AudioError, load, resolve_path, save
+from .audio_io import AudioError, load, readable_extensions, resolve_path, save
 from .dsp import r
 from .process import apply_chain
 
@@ -27,9 +27,10 @@ def collect(target: str | list[str], pattern: str = "*") -> list[Path]:
         d = resolve_path(target)
         if not d.is_dir():
             raise AudioError(f"Not a directory: {d}. Pass a folder or a list of file paths.")
-        paths = sorted(p for p in d.rglob(pattern) if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS)
+        exts = readable_extensions()
+        paths = sorted(p for p in d.rglob(pattern) if p.is_file() and p.suffix.lower() in exts)
     if not paths:
-        raise AudioError(f"No audio files found ({', '.join(sorted(AUDIO_EXTENSIONS))}).")
+        raise AudioError(f"No audio files found ({', '.join(sorted(readable_extensions()))}).")
     if len(paths) > MAX_FILES:
         raise AudioError(
             f"{len(paths)} files is more than the {MAX_FILES} limit; narrow it with `pattern` or a subfolder."

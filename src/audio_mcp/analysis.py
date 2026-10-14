@@ -10,7 +10,7 @@ from scipy import ndimage, signal
 
 from . import loudness
 from . import pitch as pitch_mod
-from .audio_io import Audio, AudioError, _info, resolve_path
+from .audio_io import Audio, AudioError, open_source, resolve_path
 from .dsp import (
     amp_db,
     describe_hz,
@@ -523,7 +523,8 @@ def quick_levels(samples: np.ndarray, sr: int) -> dict:
 def timeline(path, segments: int = 24, start: float | None = None, end: float | None = None) -> dict:
     """Streams the file, so it works on recordings of any length."""
     p = resolve_path(path)
-    info = _info(p)
+    src = open_source(p)  # FFmpeg-decoded formats stream from their cached WAV
+    info = src.info
     sr = info.samplerate
     s0 = int(round((start or 0.0) * sr))
     s1 = info.frames if end is None else min(info.frames, int(round(end * sr)))
@@ -542,7 +543,7 @@ def timeline(path, segments: int = 24, start: float | None = None, end: float | 
     cden = np.zeros(segments)
     pos = s0
     bounds = s0 + np.round(np.arange(1, segments) * seg_len).astype(np.int64)  # first sample of segments 1..n-1
-    for blk in sf.blocks(str(p), blocksize=block, start=s0, stop=s1, dtype="float32", always_2d=True):
+    for blk in sf.blocks(str(src.read_path), blocksize=block, start=s0, stop=s1, dtype="float32", always_2d=True):
         # Split the block at segment boundaries so levels never leak into a neighbouring segment.
         i = 0
         while i < len(blk):
