@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-16
+
+Batch export to any sample format, for preparing clips for retro and low-memory targets.
+
 ### Added
 - **`audio_batch_process` takes `subtype`** (new optional parameter, same as `audio_process`): the sample format
   for every output file, e.g. `PCM_16` or `PCM_U8` for 8-bit WAV. With `to_mono` and `resample`, this turns a

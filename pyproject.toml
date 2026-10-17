@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audio-mcp"
-version = "0.3.0"
+version = "0.4.0"
 description = "Audio perception for AI agents: measure, see, compare, edit and synthesize sound over MCP."
 readme = "README.md"
 license = "MIT"
