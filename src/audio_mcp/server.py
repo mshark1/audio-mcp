@@ -168,13 +168,20 @@ def audio_batch_survey(target: str | list[str], pattern: str = "*") -> dict:
 
 @tool(annotations=WRITES_FILE)
 def audio_batch_process(
-    target: str | list[str], operations: list[dict], output_dir: str, pattern: str = "*", overwrite: bool = False
+    target: str | list[str],
+    operations: list[dict],
+    output_dir: str,
+    pattern: str = "*",
+    overwrite: bool = False,
+    subtype: str | None = None,
 ) -> dict:
     """Apply one operations chain (same format as audio_process) to every file in a folder or list, writing
     results with the same relative names into output_dir. Refuses to write into the input folder unless
     overwrite=true. Example: normalize a set of sound effects to the same loudness:
-    [{"op":"trim_silence"}, {"op":"normalize_lufs","lufs":-18,"limit":true}]."""
-    return batch.process_many(target, operations, output_dir, pattern, overwrite)
+    [{"op":"trim_silence"}, {"op":"normalize_lufs","lufs":-18,"limit":true}].
+    subtype: sample format for every output, e.g. PCM_16, PCM_24, FLOAT, or PCM_U8 for 8-bit WAV (retro or
+    low-memory targets: combine with to_mono and resample). Checked before any file is written."""
+    return batch.process_many(target, operations, output_dir, pattern, overwrite, subtype)
 
 
 @tool(annotations=READ_ONLY)
@@ -200,7 +207,7 @@ def audio_process(
     fade_in/fade_out(seconds, curve=cosine|linear|equal_power) crop(start, end) pad(start, end)
     highpass/lowpass(hz, order=4) eq(hz, db, q=1) low_shelf/high_shelf(hz, db) remove_dc to_mono to_stereo
     resample(rate) reverse polarity(channel=None) loop_crossfade(seconds=0.05) mix(path, at=0, gain_db=0) append(path, gap=0).
-    subtype: e.g. PCM_16, PCM_24, FLOAT (WAV). Returns before/after levels and any warnings."""
+    subtype: e.g. PCM_16, PCM_24, FLOAT, PCM_U8 (8-bit) for WAV. Returns before/after levels and any warnings."""
     audio = audio_io.load(path)
     x, sr, log = process_mod.apply_chain(audio, operations)
     target = output or audio_io.default_output(audio.path, "processed")

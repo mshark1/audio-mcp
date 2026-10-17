@@ -271,6 +271,36 @@ def test_batch_survey_and_process(tmp_path):
         server.audio_batch_process(str(lib), ops, str(lib))
 
 
+def test_batch_process_writes_8bit_low_rate(tmp_path):
+    # Retro targets (e.g. Game Boy voice clips) need small mono 8-bit files at a low sample rate.
+    lib = tmp_path / "voice"
+    lib.mkdir()
+    for hz in (330, 440):
+        write(lib / f"{hz}.wav", np.stack([sine(hz, 1.0, 0.5)] * 2, axis=1))
+    ops = [{"op": "to_mono"}, {"op": "resample", "rate": 8000}]
+    res = server.audio_batch_process(str(lib), ops, str(tmp_path / "out"), subtype="pcm_u8")
+    assert res["processed"] == 2 and not res["errors"]
+    for hz in (330, 440):
+        info = sf.info(str(tmp_path / "out" / f"{hz}.wav"))
+        assert (info.subtype, info.samplerate, info.channels, info.frames) == ("PCM_U8", 8000, 1, 8000)
+        rep = server.audio_analyze(str(tmp_path / "out" / f"{hz}.wav"), rhythm=False)
+        assert abs(rep["pitch"]["median"]["hz"] - hz) < 2
+        assert rep["levels"]["peak_dbfs"] == pytest.approx(-6.02, abs=0.2)  # 8-bit steps are 1/128
+
+
+def test_bad_subtype_is_refused_before_writing(tmp_path):
+    lib = tmp_path / "mixed"
+    lib.mkdir()
+    write(lib / "a.wav", sine(440, 0.5, 0.5))
+    sf.write(str(lib / "b.ogg"), sine(440, 0.5, 0.5).astype(np.float32), SR)
+    out = tmp_path / "out"
+    with pytest.raises(AudioError, match=r"'PCM_U8' can't be written to \.ogg.*needs WAV"):
+        server.audio_batch_process(str(lib), [{"op": "gain", "db": -1}], str(out), subtype="PCM_U8")
+    assert not out.exists()
+    with pytest.raises(AudioError, match="'NOPE' can't be written to .wav files. .wav accepts: .*PCM_U8"):
+        server.audio_process(str(lib / "a.wav"), [{"op": "gain", "db": -1}], subtype="NOPE")
+
+
 def test_hum_detected_and_fix_suggested(tmp_path):
     rng = np.random.default_rng(5)
     t = np.arange(3 * SR) / SR

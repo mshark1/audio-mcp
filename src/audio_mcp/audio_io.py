@@ -31,6 +31,7 @@ DEFAULT_SUBTYPES = {
     ".ogg": "VORBIS",
     ".mp3": "MPEG_LAYER_III",
 }
+WRITE_FORMATS = {".wav": "WAV", ".flac": "FLAC", ".aif": "AIFF", ".aiff": "AIFF", ".ogg": "OGG", ".mp3": "MP3"}
 FLOAT_SUBTYPES = {"FLOAT", "DOUBLE"}
 
 # Containers libsndfile can't read. They're decoded with FFmpeg when it's installed.
@@ -463,16 +464,30 @@ def write_chunked(path, samples: np.ndarray, sr: int, subtype: str, frames: int 
             f.write(samples[i : i + frames])
 
 
+def check_subtype(ext: str, subtype: str | None) -> str:
+    """The upper-cased subtype to write for extension `ext`, or an AudioError naming the ones that format accepts."""
+    if ext not in DEFAULT_SUBTYPES:
+        raise AudioError(f"Can't write '{ext}'. Use one of: {', '.join(sorted(DEFAULT_SUBTYPES))}.")
+    if subtype is None:
+        return DEFAULT_SUBTYPES[ext]
+    fmt = WRITE_FORMATS[ext]
+    allowed = sf.available_subtypes(fmt)
+    if subtype.upper() not in allowed:
+        raise AudioError(
+            f"Subtype '{subtype}' can't be written to {ext} files. {ext} accepts: {', '.join(sorted(allowed))}"
+            + (" (8-bit audio needs WAV: PCM_U8)." if ext != ".wav" and "8" in subtype else ".")
+        )
+    return subtype.upper()
+
+
 def save(
     samples: np.ndarray, sr: int, path, overwrite: bool = False, subtype: str | None = None
 ) -> tuple[Path, list[str]]:
     p = resolve_path(path)
     ext = p.suffix.lower()
-    if ext not in DEFAULT_SUBTYPES:
-        raise AudioError(f"Can't write '{ext or p.name}'. Use one of: {', '.join(sorted(DEFAULT_SUBTYPES))}.")
+    subtype = check_subtype(ext or p.name, subtype)
     if p.exists() and not overwrite:
         raise AudioError(f"{p} already exists. Choose another output path or pass overwrite=true.")
-    subtype = (subtype or DEFAULT_SUBTYPES[ext]).upper()
     warnings = []
     samples = np.asarray(samples, dtype=np.float32)
     peak = float(np.max(np.abs(samples))) if samples.size else 0.0

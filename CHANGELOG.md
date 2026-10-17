@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **`audio_batch_process` takes `subtype`** (new optional parameter, same as `audio_process`): the sample format
+  for every output file, e.g. `PCM_16` or `PCM_U8` for 8-bit WAV. With `to_mono` and `resample`, this turns a
+  folder of recordings into small clips for retro or low-memory targets such as Game Boy homebrew. The subtype is
+  checked against every output format before any file is written.
+
+### Changed
+- An unsupported `subtype` in `audio_process` or `audio_batch_process` now fails with the list of subtypes that
+  format accepts (and a pointer to WAV for 8-bit), instead of libsndfile's "System error".
+
 ## [0.3.0] - 2026-10-14
 
 Three capabilities chosen from research into real audio needs (podcast delivery, indie game audio, AI audio

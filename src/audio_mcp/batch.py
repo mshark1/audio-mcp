@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from .analysis import analyze, quick_levels
-from .audio_io import AudioError, load, readable_extensions, resolve_path, save
+from .audio_io import DEFAULT_SUBTYPES, AudioError, check_subtype, load, readable_extensions, resolve_path, save
 from .dsp import r
 from .process import apply_chain
 
@@ -143,7 +143,12 @@ def survey(target: str | list[str], pattern: str = "*") -> dict:
 
 
 def process_many(
-    target: str | list[str], operations: list[dict], output_dir: str, pattern: str = "*", overwrite: bool = False
+    target: str | list[str],
+    operations: list[dict],
+    output_dir: str,
+    pattern: str = "*",
+    overwrite: bool = False,
+    subtype: str | None = None,
 ) -> dict:
     """Apply one edit chain to many files, writing results (same names) into output_dir."""
     paths = collect(target, pattern)
@@ -153,16 +158,19 @@ def process_many(
             "output_dir contains the input files; choose a different folder (or pass overwrite=true to replace them)."
         )
     base = resolve_path(target) if isinstance(target, str) else None
+    dests = {}
+    for p in paths:
+        dest = out_dir / (p.relative_to(base) if base else Path(p.name))
+        dests[p] = dest if dest.suffix.lower() in DEFAULT_SUBTYPES else dest.with_suffix(".wav")
+    # A bad subtype would fail every file the same way, so refuse before writing anything.
+    for ext in sorted({d.suffix.lower() for d in dests.values()}):
+        check_subtype(ext, subtype)
     results, errors = [], []
     for p in paths:
         try:
             audio = load(p)
             x, sr, log = apply_chain(audio, operations)
-            rel = p.relative_to(base) if base else Path(p.name)
-            dest = out_dir / rel
-            if dest.suffix.lower() not in (".wav", ".flac", ".ogg", ".aiff", ".aif", ".mp3"):
-                dest = dest.with_suffix(".wav")
-            written, warnings = save(x, sr, dest, overwrite=overwrite)
+            written, warnings = save(x, sr, dests[p], overwrite=overwrite, subtype=subtype)
             after = quick_levels(x, sr)
             results.append(
                 {
